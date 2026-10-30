@@ -23,7 +23,7 @@
 
 ### Вариант 1: Локальный запуск (Python)
 ```bash
-git clone [https://github.com/samandarolimjonov273/ecomdev-edu-billing.git](https://github.com/samandarolimjonov273/ecomdev-edu-billing.git)
+git clone https://github.com/samandarolimjonov273/ecomdev-edu-billing.git
 cd ecomdev-edu-billing
 
 python -m pip install -r requirements.txt

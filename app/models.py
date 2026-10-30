@@ -30,6 +30,8 @@ class Payment(Base):
     payment_date = Column(Date, nullable=False, default=date.today, index=True)
     payment_method = Column(String(30), nullable=False, default="Наличные")
     comment = Column(String(255), nullable=True)
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
+    tariff_snapshot = Column(Numeric(12, 2), nullable=True)
 
     student = relationship("Student", back_populates="payments")
 

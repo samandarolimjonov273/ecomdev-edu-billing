@@ -1,4 +1,5 @@
 import asyncio
+import html
 import os
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -13,6 +14,15 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+
+def is_authorized(user_id: int | None) -> bool:
+    """Если задан список TELEGRAM_ADMIN_IDS в .env, разрешает команды только указанным ID."""
+    raw = os.getenv("TELEGRAM_ADMIN_IDS", "").strip()
+    if not raw:
+        return True
+    allowed = {int(x.strip()) for x in raw.split(",") if x.strip().isdigit()}
+    return (user_id in allowed) if allowed else True
 
 
 def fmt_sum(val: Decimal | float | int) -> str:
@@ -42,9 +52,12 @@ def handle_debt() -> str:
             f"Всего должников: <b>{report.total_debtors}</b> | Сумма: <b>{fmt_sum(report.total_debt_sum)}</b>\n",
         ]
         for idx, d in enumerate(report.debtors, start=1):
+            safe_name = html.escape(d.name)
+            safe_group = html.escape(d.group_name)
+            safe_phone = html.escape(d.phone)
             lines.append(
-                f"{idx}. <b>{d.name}</b> (ID: <code>{d.student_id}</code>)\n"
-                f"   Группа: {d.group_name} | 📞 {d.phone}\n"
+                f"{idx}. <b>{safe_name}</b> (ID: <code>{d.student_id}</code>)\n"
+                f"   Группа: {safe_group} | 📞 {safe_phone}\n"
                 f"   Оплачено: {fmt_sum(d.paid_amount)} из {fmt_sum(d.monthly_fee)}\n"
                 f"   🔴 Долг: <b>{fmt_sum(d.debt_amount)}</b>\n"
                 f"   Быстрая оплата: <code>/pay {d.student_id} {int(d.debt_amount)}</code>\n"
@@ -54,7 +67,7 @@ def handle_debt() -> str:
         db.close()
 
 
-def handle_pay(text: str, username: str) -> str:
+def handle_pay(text: str, username: str, update_id: int | None = None) -> str:
     parts = text.strip().split()
     if len(parts) < 3:
         return (
@@ -76,6 +89,7 @@ def handle_pay(text: str, username: str) -> str:
         if not student:
             return f"❌ Ученик с ID <code>{student_id}</code> не найден."
 
+        idem_key = f"tg-{update_id}" if update_id is not None else None
         payment = crud.create_payment(
             db,
             schemas.PaymentCreate(
@@ -84,7 +98,9 @@ def handle_pay(text: str, username: str) -> str:
                 payment_date=date.today(),
                 payment_method="Telegram Bot",
                 comment=f"Внесено через Telegram (@{username})",
+                idempotency_key=idem_key,
             ),
+            student=student,
         )
         today = date.today()
         report = crud.get_debtors_for_month(db, year=today.year, month=today.month)
@@ -93,9 +109,10 @@ def handle_pay(text: str, username: str) -> str:
             Decimal("0.00"),
         )
 
+        safe_name = html.escape(student.name)
         return (
             f"✅ <b>Оплата успешно принята!</b>\n\n"
-            f"👤 Ученик: <b>{student.name}</b> (ID {student.id})\n"
+            f"👤 Ученик: <b>{safe_name}</b> (ID {student.id})\n"
             f"💰 Сумма: <b>{fmt_sum(payment.amount)}</b>\n"
             f"📅 Дата: {payment.payment_date.strftime('%d.%m.%Y')}\n"
             f"📌 Остаток долга за {report.month}: <b>{fmt_sum(remaining)}</b>"
@@ -133,13 +150,20 @@ async def run_bot():
                 )
                 data = resp.json()
                 for upd in data.get("result", []):
-                    offset = upd["update_id"] + 1
+                    upd_id = upd["update_id"]
+                    offset = upd_id + 1
                     msg = upd.get("message") or {}
                     chat_id = msg.get("chat", {}).get("id")
                     text = (msg.get("text") or "").strip()
-                    user = msg.get("from", {}).get("username") or str(msg.get("from", {}).get("id", "user"))
+                    from_user = msg.get("from") or {}
+                    user_id = from_user.get("id")
+                    username = from_user.get("username") or str(user_id or "user")
 
                     if not chat_id or not text:
+                        continue
+
+                    if not is_authorized(user_id):
+                        await send_message(client, chat_id, "⛔ У вас нет прав доступа к финансовому боту.")
                         continue
 
                     cmd = text.split()[0].split("@")[0].lower()
@@ -148,7 +172,7 @@ async def run_bot():
                     elif cmd == "/debt":
                         reply = handle_debt()
                     elif cmd == "/pay":
-                        reply = handle_pay(text, user)
+                        reply = handle_pay(text, username, update_id=upd_id)
                     else:
                         reply = "Используйте команды <code>/debt</code> или <code>/pay &lt;id&gt; &lt;сумма&gt;</code>"
 

@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 
 
-# --- УЧЕНИКИ (CRUD) ---
 def create_student(db: Session, data: schemas.StudentCreate) -> models.Student:
     student = models.Student(**data.model_dump())
     db.add(student)
@@ -40,9 +39,24 @@ def delete_student(db: Session, student: models.Student) -> None:
     db.commit()
 
 
-# --- ОПЛАТЫ ---
-def create_payment(db: Session, data: schemas.PaymentCreate) -> models.Payment:
-    payment = models.Payment(**data.model_dump())
+def get_payment_by_idempotency_key(db: Session, key: str) -> models.Payment | None:
+    return db.query(models.Payment).filter(models.Payment.idempotency_key == key).first()
+
+
+def create_payment(
+    db: Session, data: schemas.PaymentCreate, student: models.Student | None = None
+) -> models.Payment:
+    if data.idempotency_key:
+        existing = get_payment_by_idempotency_key(db, data.idempotency_key)
+        if existing:
+            return existing
+
+    if student is None:
+        student = get_student(db, data.student_id)
+
+    payload = data.model_dump()
+    payload["tariff_snapshot"] = student.monthly_fee if student else None
+    payment = models.Payment(**payload)
     db.add(payment)
     db.commit()
     db.refresh(payment)
@@ -58,19 +72,19 @@ def get_student_payments(db: Session, student_id: int) -> list[models.Payment]:
     )
 
 
-# --- АНАЛИТИКА И ДОЛЖНИКИ ЗА МЕСЯЦ (БЕЗ ПРОБЛЕМЫ N+1) ---
 def get_debtors_for_month(db: Session, year: int, month: int) -> schemas.DebtorsReportResponse:
     start_date = date(year, month, 1)
     last_day = calendar.monthrange(year, month)[1]
     end_date = date(year, month, last_day)
 
     paid_sum_expr = func.coalesce(func.sum(models.Payment.amount), 0)
+    snapshot_fee_expr = func.max(models.Payment.tariff_snapshot)
 
-    # Единый SQL-запрос с LEFT OUTER JOIN и фильтрацией дат внутри ON-условия
     rows = (
         db.query(
             models.Student,
             paid_sum_expr.label("paid_amount"),
+            snapshot_fee_expr.label("historical_fee"),
         )
         .outerjoin(
             models.Payment,
@@ -87,9 +101,16 @@ def get_debtors_for_month(db: Session, year: int, month: int) -> schemas.Debtors
 
     debtors_list: list[schemas.DebtorItem] = []
     total_debt_sum = Decimal("0.00")
+    current_ym = date.today().strftime("%Y-%m")
+    target_ym = f"{year:04d}-{month:02d}"
 
-    for student, paid_raw in rows:
-        monthly_fee = Decimal(str(student.monthly_fee)).quantize(Decimal("0.01"))
+    for student, paid_raw, hist_fee in rows:
+        # Для прошлых месяцев используем сохранённый исторический тариф (если были платежи),
+        # а для текущего месяца — актуальный тариф ученика.
+        effective_fee_raw = (
+            hist_fee if (hist_fee is not None and target_ym < current_ym) else student.monthly_fee
+        )
+        monthly_fee = Decimal(str(effective_fee_raw)).quantize(Decimal("0.01"))
         paid_amount = Decimal(str(paid_raw)).quantize(Decimal("0.01"))
 
         if paid_amount < monthly_fee:
@@ -107,11 +128,10 @@ def get_debtors_for_month(db: Session, year: int, month: int) -> schemas.Debtors
                 )
             )
 
-    # Сортируем от самого крупного долга к меньшему для удобства менеджера
     debtors_list.sort(key=lambda x: x.debt_amount, reverse=True)
 
     return schemas.DebtorsReportResponse(
-        month=f"{year:04d}-{month:02d}",
+        month=target_ym,
         total_debtors=len(debtors_list),
         total_debt_sum=total_debt_sum,
         debtors=debtors_list,
