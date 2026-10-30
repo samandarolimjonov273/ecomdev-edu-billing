@@ -1,91 +1,92 @@
-﻿# 💼 Ecomdev EduBilling — Система учёта оплат учебного центра
+﻿# Ecomdev EduBilling
 
-![CI Status](https://github.com/samandarolimjonov273/ecomdev-edu-billing/actions/workflows/ci.yml/badge.svg)
-![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)
+Mini billing system for an education center with:
+- student management
+- payment tracking
+- debt calculation by month
+- Telegram bot assistant for admin operations
 
-Тестовое задание (Этап 3) на позицию разработчика в **Ecomdev**.
-В проекте реализованы **оба варианта интерфейса** из Части 2 (адаптивный Mobile-First веб-интерфейс кассира + Telegram-бот), подключённые к единому слою бизнес-логики и БД.
+## Stack
+- Python 3.11+
+- FastAPI
+- SQLAlchemy
+- SQLite (default for local development)
+- PostgreSQL support via Docker Compose
+- Telegram Bot API
 
----
+## Part 1. API
+The project implements the required financial accounting functionality:
 
-## 🖼 Превью интерфейсов
+### Students
+- create student
+- list students
+- update student
+- archive student
 
-### 1. Веб-интерфейс кассира (Вариант Б — Mobile-First FinTech UI)
-![Веб-интерфейс кассира](docs/dashboard.png)
+### Payments
+- add payment for a student
+- list payments by student
+- payment history is preserved even after archive
 
-### 2. Telegram-бот (Вариант А — `/debt` и `/pay <id> <сумма>`)
-![Telegram-бот](docs/bot.png)
+### Debtors
+- `GET /debtors?month=YYYY-MM`
+- returns students who paid less than their monthly fee and the remaining debt
 
----
+## Part 2. Interface
+This project implements the Telegram bot option.
 
-## 🚀 Быстрый запуск проекта с нуля (Часть 3.1)
+### Commands
+- `/debt` — shows debtors for the current month
+- `/pay <student_id> <amount>` — adds a payment for a student
 
-### Локальный запуск (SQLite)
+## Part 3. README
+### Quick start
+
+#### 1. Clone repository
 ```bash
-git clone https://github.com/samandarolimjonov273/ecomdev-edu-billing.git
-cd ecomdev-edu-billing
+git clone https://github.com/<your-user>/<your-repo>.git
+cd <your-repo>
+2. Create environment file
+cp .env.example .env
+Then update .env:
+APP_ENV=development
+API_SECRET_KEY=your_super_long_random_secret_here
+COOKIE_SECURE=0
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_ADMIN_IDS=
+AUTO_START_BOT=0
+CORS_ORIGINS=http://127.0.0.1:8000,http://localhost:8000
+Important:
 
+.env is local-only and must not be committed
+API_SECRET_KEY must be set in production
+TELEGRAM_ADMIN_IDS must contain valid Telegram user IDs before bot payment commands are enabled
+3. Install dependencies
 python -m pip install -r requirements.txt
-cp .env.example .env
-# В .env установите уникальный API_SECRET_KEY и COOKIE_SECURE=0 для локального HTTP.
+4. Run migrations
 python migrate.py
+5. Seed demo data
 python seed.py
-python -m uvicorn app.main:app --reload --env-file .env
-```
-После запуска доступны:
-- 🌐 **Веб-касса:** http://127.0.0.1:8000
-- 📄 **Swagger API документация:** http://127.0.0.1:8000/docs
-- 📥 **Экспорт должников в CSV (Excel):** через защищённый интерфейс
+6. Start API
+python -m uvicorn app.main:app --reload
+Open:
 
-Не оставляйте `API_SECRET_KEY` пустым или с примерным значением. Для локального HTTP укажите `COOKIE_SECURE=0`; в production за HTTPS-прокси обязательно используйте `COOKIE_SECURE=1`.
-
-### Docker Compose (PostgreSQL + API + Telegram bot)
-```bash
-cp .env.example .env
-# Замените API_SECRET_KEY и POSTGRES_PASSWORD в .env.
-# Для Telegram-бота обязательно укажите TELEGRAM_BOT_TOKEN и TELEGRAM_ADMIN_IDS=123456789
-# Чтобы бот запускался автоматически, оставьте AUTO_START_BOT=1.
-docker compose up --build
-```
-Compose использует PostgreSQL; API-контейнер выполняет миграции до запуска сервера. Telegram-бот работает отдельным сервисом. Чтобы включить его, укажите в `.env` `TELEGRAM_BOT_TOKEN` и числовые ID разрешённых администраторов в `TELEGRAM_ADMIN_IDS` (или `TELEGRAM_ALLOWED_USER_IDS`). Если список не задан, финансовые команды закрыты для всех — это прямой и безопасный fail-closed режим.
-
-### Почему Telegram-бот не принимает оплаты
-Если бот отвечает: `⛔ Доступ закрыт` или `TELEGRAM_ADMIN_IDS не задан`, причина — прямо в конфиге. Система специально блокирует `/pay` и `/debt` до тех пор, пока не указан хотя бы один действительный Telegram ID. Это сделано, чтобы никто не мог случайно внести платёж или посмотреть задолженность от чужого аккаунта.
-
-Так как `POSTGRES_PASSWORD` используется внутри URL подключения, задайте сильный буквенно-цифровой пароль, не требующий URL-кодирования. В production используйте HTTPS через reverse proxy.
-
-### Миграции и тесты
-```bash
-python migrate.py
-python -m pytest -v
-```
-`migrate.py` применяет версионированные шаги схемы и создаёт SQLite online backup перед миграцией. Регулярно проверяйте восстановление из backup в production.
-
-### Локальный запуск Telegram-бота
-```bash
+http://127.0.0.1:8000/docs
+http://127.0.0.1:8000
+7. Start Telegram bot
 python -m bot.telegram_bot
-```
-Команды бота:
-- `/debt` — список должников текущего месяца с расчётом остатка долга.
-- `/pay <id ученика> <сумма>` — мгновенное внесение оплаты (например: `/pay 5 500000`).
+Production notes
+Do not commit .env
+Use a strong API_SECRET_KEY
+Set COOKIE_SECURE=1 behind HTTPS or a trusted reverse proxy
+Telegram bot is fail-closed: if no admin IDs are configured, payment commands are disabled
+For real deployment, use a proper secret manager instead of only .env
+3–5 improvements if I had another week
+Full RBAC with separate roles for admin, cashier, and viewer
+Real secret manager integration for AWS/GCP/Azure
+Stronger audit immutability and tamper-evidence for financial logs
+Deployment guardrails, backup verification, and staging/production checks
+CI/CD pipeline for migration validation and automated test coverage
+Part 4. AI usage summary
+I used GitHub Copilot together with targeted prompts and direct test trace analysis to debug the project. The most effective prompts were short and specific, such as: “fix the root cause of the failing FastAPI tests with minimal patch”, “explain why startup failed because of env mismatch and show the exact fix”, and “add production-safe config validation without breaking the API contract”. AI helped with scaffolding, explaining runtime issues, and suggesting safer patterns, but the final validation and the business-logic fixes were reviewed and corrected manually. This was especially important for migration behavior, debt calculation, and bot authorization rules. In total, AI accelerated the development, but the final correctness was confirmed by the pytest suite and direct code review.
 
----
-
-## 📡 Архитектурные особенности
-- **База данных:** SQLite для локальной разработки и небольших демонстраций; PostgreSQL в Docker Compose. Схема обновляется отдельной командой `python migrate.py`.
-- **Расчёт периодов:** тарифы действуют с заданного месяца; отчёт переносит непогашенный остаток и положительную переплату. Для старых записей дата зачисления может быть неизвестна; мигрированная история помечается как неподтверждённая.
-- **Идемпотентность:** повтор с тем же ключом и payload возвращает прежний платёж; повторное использование ключа с другим payload приводит к `409 Conflict`.
-- **Отмена платежа:** платежи не удаляются; отмена фиксирует причину, пользователя и время, сохраняет запись в истории и исключает платёж из расчёта задолженности.
-- **Доступ:** `API_SECRET_KEY` открывает сессию; браузер использует HttpOnly cookie и CSRF token. Без API-ключа production-режим не запускается. Общий ключ не заменяет RBAC.
-- **Аудит и архив:** ученик архивируется без удаления платежей; финансовые и административные изменения записываются в журнал аудита.
-- **Telegram:** без списка администраторов доступ по умолчанию закрыт; DB lease ограничивает число активных polling-инстансов.
-- **Production hardening:** проект автоматически загружает `.env` через `python-dotenv`, централизует конфиги в `app/config.py`, валидирует runtime-конфигурацию перед запуском и не допускает случайного запуска без секретов в production. Также добавлены защитные HTTP headers (`X-Frame-Options`, `Content-Security-Policy`, `Referrer-Policy`, `Permissions-Policy`) и расширяемый RBAC слой через `X-Role` для роли `admin`, `cashier` и `viewer`.
-
-## ⚠️ Production чекловлари
-- Используется shared-secret API-ключ; персональные учётные записи кассиров и RBAC пока не реализованы.
-- Если дата зачисления отсутствует в legacy-базе, миграция не может восстановить её достоверно. Такие периоды помечаются как неподтверждённые и требуют сверки с бухгалтерскими данными.
-- До production проверьте, запускалась ли миграция v7 ранее: если да, часть дат могла быть автоматически изменена и восстановить исходные значения без бухгалтерских источников нельзя. Для ещё не прошедших v7 баз миграция теперь останавливается на неоднозначных записях `2026-01`; сверяйте backup и первичные документы до повторного запуска.
-- Audit log защищает историю от обычного удаления через UI, но не является криптографически tamper-evident защитой от администратора БД.
-- Перед production-публикацией проверьте восстановление backup, PostgreSQL deploy, HTTPS, управление секретами и аварийное восстановление в staging.
-```
