@@ -1,23 +1,55 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: edubilling_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-edubilling}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-edubilling}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edubilling}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   web:
     build: .
     container_name: edubilling_api
     ports:
       - "8000:8000"
-    volumes:
-      - ./edu_billing.db:/app/edu_billing.db
     env_file:
       - .env
+    environment:
+      APP_ENV: production
+      ALLOW_INSECURE_DEMO: "0"
+      COOKIE_SECURE: ${COOKIE_SECURE:-1}
+      AUTO_START_BOT: "0"
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-edubilling}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-edubilling}
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   bot:
     build: .
     container_name: edubilling_bot
-    command: python -m bot.telegram_bot
-    volumes:
-      - ./edu_billing.db:/app/edu_billing.db
     env_file:
       - .env
+    command: python -m bot.telegram_bot
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-edubilling}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-edubilling}
     depends_on:
-      - web
+      db:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      disable: true
     restart: unless-stopped
+
+volumes:
+  pgdata:

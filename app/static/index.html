@@ -12,7 +12,7 @@
     .custom-select {
       appearance: none;
       -webkit-appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right 0.65rem center;
       background-size: 0.9rem;
@@ -31,7 +31,7 @@
         </div>
       </div>
 
-      <div class="flex items-center gap-2.5">
+      <div class="flex items-center gap-2">
         <div
           onclick="openNativePicker('monthPicker')"
           class="relative flex items-center gap-2 bg-slate-900 hover:bg-slate-800/90 border border-slate-700/80 rounded-xl px-3.5 py-2 cursor-pointer transition select-none"
@@ -43,6 +43,15 @@
           </svg>
           <input type="month" id="monthPicker" aria-label="Расчётный месяц" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
         </div>
+
+        <button
+          type="button"
+          onclick="openAuthModal()"
+          id="authSessionBtn"
+          class="text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-300 px-3 py-2 rounded-xl border border-slate-800 transition"
+        >
+          🔒 Сессия
+        </button>
 
         <a href="/docs" target="_blank" class="hidden sm:inline-flex items-center gap-1.5 text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-2 rounded-xl border border-slate-800 transition">
           Swagger API ↗
@@ -65,6 +74,7 @@
       <div class="sm:col-span-4 bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4">
         <p class="text-xs font-medium text-slate-400">Общая сумма задолженности</p>
         <p id="kpiTotalDebt" class="text-xl sm:text-2xl font-extrabold text-amber-400 mt-1">0 сум</p>
+        <p id="kpiUnverifiedDebt" class="text-[11px] text-amber-300 mt-1" aria-live="polite"></p>
       </div>
 
       <div class="sm:col-span-4 bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between">
@@ -186,7 +196,7 @@
               <span id="filteredCountBadge" class="text-xs text-slate-400"></span>
               <button
                 type="button"
-                onclick="window.location.href='/debtors/export?month=' + encodeURIComponent(document.getElementById('monthPicker').value || '')"
+                onclick="exportDebtorsCsv()"
                 class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-2.5 py-1 rounded-lg border border-slate-700 transition flex items-center gap-1"
               >
                 ⬇ Excel / CSV
@@ -224,6 +234,7 @@
     </div>
   </main>
 
+  <!-- Модальное окно: Добавить нового ученика -->
   <div id="studentModal" class="fixed inset-0 z-50 hidden bg-black/75 flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
       <div class="flex items-center justify-between">
@@ -243,6 +254,7 @@
     </div>
   </div>
 
+  <!-- Модальное окно: История оплат ученика -->
   <div id="historyModal" class="fixed inset-0 z-50 hidden bg-black/75 flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
       <div class="flex items-center justify-between">
@@ -253,13 +265,31 @@
     </div>
   </div>
 
+  <!-- Модальное окно: Сессионная авторизация кассира (HttpOnly Cookie + CSRF) -->
+  <div id="authModal" class="fixed inset-0 z-50 hidden bg-black/75 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-base">🔒 Авторизация кассира</h3>
+        <button onclick="closeAuthModal()" class="text-slate-400 hover:text-white text-sm">✕</button>
+      </div>
+      <p class="text-xs text-slate-400">Ключ проверяется на сервере и открывает сессию в защищённой <code class="text-indigo-300">HttpOnly; SameSite=Strict</code> куке с защитой от CSRF.</p>
+      <form id="authLoginForm" class="space-y-3">
+        <input type="password" id="authKeyInput" placeholder="Введите секретный ключ кассы..." required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm" />
+        <div id="authModalError" class="hidden text-xs text-rose-400 bg-rose-500/10 border border-rose-500/30 p-2.5 rounded-xl"></div>
+        <div class="flex gap-2">
+          <button type="submit" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 rounded-xl text-sm">Войти в кассу</button>
+          <button type="button" onclick="logoutSession()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2.5 rounded-xl text-xs">Выйти</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
     const RU_MONTHS = [
       'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
       'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
     ];
 
-    // Защита от Stored XSS при выводе пользовательских строк в innerHTML
     function escapeHtml(str) {
       return String(str ?? '')
         .replace(/&/g, '&amp;')
@@ -267,6 +297,145 @@
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+    }
+
+    // --- ЗАЩИЩЁННАЯ СЕССИЯ КАССИРА (HTTP-ONLY COOKIE + X-CSRF-TOKEN) ---
+    let currentCsrfToken = null;
+
+    function getCookieValue(name) {
+      const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+      return match ? decodeURIComponent(match[2]) : null;
+    }
+
+    async function checkAuthStatus() {
+      try {
+        const res = await fetch('/auth/status', { credentials: 'same-origin' });
+        const data = await res.json();
+        currentCsrfToken = data.csrf_token || getCookieValue('edubilling_csrf');
+        const btn = document.getElementById('authSessionBtn');
+        if (!data.auth_required) {
+          btn.textContent = '🔓 Демо-режим';
+          btn.className = 'text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-400 px-3 py-2 rounded-xl border border-slate-800 transition';
+        } else if (data.authenticated) {
+          btn.textContent = '🔒 Сессия активна';
+          btn.className = 'text-xs font-medium bg-emerald-500/15 text-emerald-300 px-3 py-2 rounded-xl border border-emerald-500/40 transition';
+        } else {
+          btn.textContent = '🔒 Войти';
+          btn.className = 'text-xs font-medium bg-rose-500/15 text-rose-300 px-3 py-2 rounded-xl border border-rose-500/40 transition';
+          openAuthModal();
+        }
+      } catch (_) {}
+    }
+
+    async function apiFetch(url, options = {}) {
+      const headers = new Headers(options.headers || {});
+      const csrf = currentCsrfToken || getCookieValue('edubilling_csrf');
+      if (csrf) headers.set('X-CSRF-Token', csrf);
+      const res = await fetch(url, { ...options, headers, credentials: 'same-origin' });
+      if (res.status === 401) {
+        openAuthModal();
+      }
+      return res;
+    }
+
+    function openAuthModal() {
+      document.getElementById('authModalError').classList.add('hidden');
+      document.getElementById('authModal').classList.remove('hidden');
+    }
+    function closeAuthModal() {
+      document.getElementById('authModal').classList.add('hidden');
+    }
+
+    document.getElementById('authLoginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errBox = document.getElementById('authModalError');
+      errBox.classList.add('hidden');
+      const api_key = document.getElementById('authKeyInput').value.trim();
+
+      try {
+        const res = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ api_key })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          currentCsrfToken = data.csrf_token || getCookieValue('edubilling_csrf');
+          document.getElementById('authKeyInput').value = '';
+          closeAuthModal();
+          await checkAuthStatus();
+          await loadDashboard();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          errBox.textContent = '❌ ' + (err.detail || 'Неверный секретный ключ кассы.');
+          errBox.classList.remove('hidden');
+        }
+      } catch (_) {
+        errBox.textContent = '❌ Сетевая ошибка при входе.';
+        errBox.classList.remove('hidden');
+      }
+    });
+
+    async function logoutSession() {
+      await apiFetch('/auth/logout', { method: 'POST' });
+      currentCsrfToken = null;
+      closeAuthModal();
+      await checkAuthStatus();
+      await loadDashboard();
+    }
+
+    // Защищённое скачивание CSV через fetch + Blob (без передачи ключей в URL!)
+    async function exportDebtorsCsv() {
+      const month = encodeURIComponent(document.getElementById('monthPicker').value || '');
+      try {
+        const res = await apiFetch(`/debtors/export?month=${month}`);
+        if (!res.ok) {
+          showToast('❌ Не удалось выгрузить CSV (проверьте авторизацию).', true);
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `debtors_${month}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showToast('❌ Сетевая ошибка при скачивании CSV.', true);
+      }
+    }
+
+    // --- ПЕРСИСТЕНТНЫЙ КЛЮЧ ИДЕМПОТЕНТНОСТИ В SESSION STORAGE ---
+    function getPaymentPayloadSignature() {
+      const stId = document.getElementById('paymentStudentId').value || '';
+      const amt = String(document.getElementById('paymentAmountDisplay').value || '').replace(/\D/g, '');
+      const dt = document.getElementById('paymentDate').value || '';
+      const method = document.getElementById('paymentMethodInput').value || 'Наличные';
+      const comment = (document.getElementById('paymentComment').value || '').trim();
+      return `${stId}|${amt}|${dt}|${method}|${comment}`;
+    }
+
+    function getOrCreateIdempotencyKey() {
+      const currentSig = getPaymentPayloadSignature();
+      const savedSig = sessionStorage.getItem('edubilling_idem_sig');
+      let savedKey = sessionStorage.getItem('edubilling_idem_key');
+
+      if (!savedKey || savedSig !== currentSig) {
+        const rnd = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (Math.random().toString(36).slice(2) + Date.now());
+        savedKey = `web-${rnd}`;
+        sessionStorage.setItem('edubilling_idem_key', savedKey);
+        sessionStorage.setItem('edubilling_idem_sig', currentSig);
+      }
+      return savedKey;
+    }
+
+    function clearIdempotencyKeyAfterSuccess() {
+      sessionStorage.removeItem('edubilling_idem_key');
+      sessionStorage.removeItem('edubilling_idem_sig');
     }
 
     const fmtCurrency = (num) => new Intl.NumberFormat('ru-RU').format(Math.round(Number(num) || 0)) + ' сум';
@@ -349,10 +518,14 @@
 
       try {
         const [debtorsRes, studentsRes] = await Promise.all([
-          fetch(`/debtors?month=${encodeURIComponent(month)}`),
-          fetch('/students')
+          apiFetch(`/debtors?month=${encodeURIComponent(month)}`),
+          apiFetch('/students')
         ]);
 
+        if (debtorsRes.status === 401 || studentsRes.status === 401) {
+          showToast('🔒 Требуется авторизация кассира.', true);
+          return;
+        }
         if (!debtorsRes.ok || !studentsRes.ok) {
           throw new Error('Ошибка загрузки данных с сервера');
         }
@@ -363,6 +536,10 @@
 
         document.getElementById('kpiDebtorsCount').textContent = debtorsData.total_debtors;
         document.getElementById('kpiTotalDebt').textContent = fmtCurrency(debtorsData.total_debt_sum);
+        const unverifiedDebt = Number(debtorsData.unverified_debt_sum || 0);
+        document.getElementById('kpiUnverifiedDebt').textContent = unverifiedDebt > 0
+          ? `${fmtCurrency(unverifiedDebt)} рассчитано по неподтверждённой истории`
+          : '';
         document.getElementById('kpiTotalStudents').textContent = cachedStudents.length;
 
         populateGroupFilter();
@@ -516,7 +693,12 @@
       }
 
       container.innerHTML = filtered.map(d => {
-        const percent = Math.min(100, Math.round((Number(d.paid_amount) / Number(d.monthly_fee)) * 100));
+        const monthlyFee = Number(d.monthly_fee);
+        const covered = Math.max(0, Math.min(
+          monthlyFee,
+          Number(d.paid_amount) - Number(d.prior_arrears || 0) + Number(d.carry_over_credit || 0)
+        ));
+        const percent = monthlyFee > 0 ? Math.round((covered / monthlyFee) * 100) : 0;
         const isSelected = d.student_id === activeStudentId;
         const cardBorderClass = isSelected
           ? 'bg-slate-900/95 border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg shadow-indigo-950/50'
@@ -525,6 +707,15 @@
         const safeName = escapeHtml(d.name);
         const safeGroup = escapeHtml(d.group_name);
         const safePhone = escapeHtml(d.phone);
+        const carryText = Number(d.carry_over_credit || 0) > 0
+          ? ` (+ аванс ${fmtCurrency(d.carry_over_credit)})`
+          : '';
+        const arrearsText = Number(d.prior_arrears || 0) > 0
+          ? `; долг прошлых месяцев ${fmtCurrency(d.prior_arrears)}`
+          : '';
+        const historyWarning = d.history_verified
+          ? ''
+          : '<span class="text-[11px] font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-md">История требует сверки</span>';
 
         return `
           <div class="${cardBorderClass} border rounded-2xl p-4 transition-all space-y-3">
@@ -534,6 +725,7 @@
                   <span class="text-xs font-mono ${isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'} px-2 py-0.5 rounded-lg">ID ${Number(d.student_id)}</span>
                   <h3 class="font-bold text-sm sm:text-base">${safeName}</h3>
                   ${isSelected ? '<span class="text-[11px] font-semibold text-indigo-400 bg-indigo-500/10 border border-indigo-500/30 px-2 py-0.5 rounded-md">В кассе</span>' : ''}
+                  ${historyWarning}
                 </div>
                 <p class="text-xs text-slate-400 mt-0.5">${safeGroup} • <a href="tel:${safePhone}" class="underline hover:text-slate-200">${safePhone}</a></p>
               </div>
@@ -545,7 +737,7 @@
 
             <div class="space-y-1">
               <div class="flex justify-between text-[11px] text-slate-400">
-                <span>Оплачено: <strong class="text-slate-200">${fmtCurrency(d.paid_amount)}</strong> из ${fmtCurrency(d.monthly_fee)}</span>
+                <span>Оплаты за месяц: <strong class="text-slate-200">${fmtCurrency(d.paid_amount)}</strong>${carryText}${arrearsText}</span>
                 <span>${percent}%</span>
               </div>
               <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -618,10 +810,10 @@
 
       const submitBtn = document.getElementById('submitPayBtn');
       submitBtn.disabled = true;
-      const idemKey = `web-${student_id}-${amount}-${Date.now()}`;
+      const idemKey = getOrCreateIdempotencyKey();
 
       try {
-        const res = await fetch('/payments', {
+        const res = await apiFetch('/payments', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -634,14 +826,15 @@
           showToast(`✅ Оплата ${fmtCurrency(amount)} (${payment_method}) успешно проведена!`);
           paymentAmountDisplay.value = '';
           document.getElementById('paymentComment').value = '';
+          clearIdempotencyKeyAfterSuccess();
           await loadDashboard();
         } else {
           const err = await res.json().catch(() => ({}));
           const detail = Array.isArray(err.detail) ? err.detail[0]?.msg : err.detail;
-          showToast('❌ Ошибка: ' + (detail || 'Не удалось сохранить оплату'), true);
+          showToast(`❌ Ошибка (${res.status}): ` + (detail || 'Не удалось сохранить оплату'), true);
         }
       } catch (netErr) {
-        showToast('❌ Сетевая ошибка: сервер недоступен.', true);
+        showToast('❌ Сетевая ошибка: ключ идемпотентности сохранён в сессии, повтор безопасен.', true);
       } finally {
         submitBtn.disabled = false;
       }
@@ -666,7 +859,7 @@
       };
 
       try {
-        const res = await fetch('/students', {
+        const res = await apiFetch('/students', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -679,7 +872,7 @@
         } else {
           const err = await res.json().catch(() => ({}));
           const detail = Array.isArray(err.detail) ? err.detail[0]?.msg : err.detail;
-          errBox.textContent = '❌ Ошибка: ' + (detail || 'Проверьте корректность введённых данных');
+          errBox.textContent = `❌ Ошибка (${res.status}): ` + (detail || 'Проверьте корректность введённых данных');
           errBox.classList.remove('hidden');
         }
       } catch (_) {
@@ -696,7 +889,7 @@
       document.getElementById('historyModal').classList.remove('hidden');
 
       try {
-        const res = await fetch(`/students/${Number(studentId)}/payments`);
+        const res = await apiFetch(`/students/${Number(studentId)}/payments`);
         if (!res.ok) throw new Error('Не удалось получить историю');
         const items = await res.json();
         if (!items.length) {
@@ -704,19 +897,43 @@
           return;
         }
         list.innerHTML = items.map(p => `
-          <div class="bg-slate-950 border border-slate-800 px-3.5 py-2.5 rounded-xl space-y-1">
+          <div class="bg-slate-950 border ${p.is_voided ? 'border-rose-900/70 opacity-75' : 'border-slate-800'} px-3.5 py-2.5 rounded-xl space-y-1">
             <div class="flex justify-between items-center">
               <div class="flex items-center gap-2">
                 <span class="text-xs font-medium text-slate-300">${escapeHtml(formatDateRu(p.payment_date))}</span>
                 <span class="text-[11px] bg-slate-800 text-indigo-300 px-2 py-0.5 rounded-md">${escapeHtml(p.payment_method || 'Наличные')}</span>
               </div>
-              <span class="font-bold text-emerald-400">+${fmtCurrency(p.amount)}</span>
+              <span class="font-bold ${p.is_voided ? 'text-rose-300 line-through' : 'text-emerald-400'}">${p.is_voided ? 'Отменён ' : '+'}${fmtCurrency(p.amount)}</span>
             </div>
             ${p.comment ? `<p class="text-[11px] text-slate-400">${escapeHtml(p.comment)}</p>` : ''}
+            ${p.is_voided ? `<p class="text-[11px] text-rose-300">Причина: ${escapeHtml(p.void_reason || 'не указана')} · ${escapeHtml(p.voided_by || 'оператор')}</p>` : `
+              <button type="button" onclick="voidPayment(${Number(p.id)}, ${Number(studentId)})"
+                class="text-[11px] text-rose-300 hover:text-rose-200 underline underline-offset-2">Отменить платёж</button>`}
           </div>
         `).join('');
       } catch (e) {
         list.innerHTML = `<p class="text-rose-400 text-xs">❌ Ошибка загрузки: ${escapeHtml(e.message)}</p>`;
+      }
+    }
+
+    async function voidPayment(paymentId, studentId) {
+      const reason = window.prompt('Укажите причину отмены платежа:');
+      if (reason === null) return;
+      try {
+        const response = await apiFetch(`/payments/${Number(paymentId)}/void`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason })
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.detail || 'Не удалось отменить платёж');
+        }
+        showToast('Платёж отменён и сохранён в истории.');
+        await showHistory(Number(studentId));
+        await loadDashboard();
+      } catch (error) {
+        showToast(`❌ ${error.message}`, true);
       }
     }
 
@@ -727,7 +944,7 @@
     groupFilterSelect.addEventListener('change', renderDebtors);
     sortSelect.addEventListener('change', renderDebtors);
 
-    loadDashboard();
+    checkAuthStatus().then(loadDashboard);
   </script>
 </body>
 </html>

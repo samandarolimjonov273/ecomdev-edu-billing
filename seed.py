@@ -1,9 +1,9 @@
 from datetime import date
 from decimal import Decimal
-from app.database import SessionLocal, engine
+from app.database import SessionLocal, engine, run_migrations
 from app import models
 
-models.Base.metadata.create_all(bind=engine)
+run_migrations(engine)
 
 
 def seed_demo_data():
@@ -27,13 +27,25 @@ def seed_demo_data():
         db.add_all(students_data)
         db.commit()
 
+        db.add_all(
+            [
+                models.StudentTariffHistory(
+                    student_id=student.id,
+                    effective_from_month=first_day_current_month.strftime("%Y-%m"),
+                    monthly_fee=student.monthly_fee,
+                )
+                for student in students_data
+            ]
+        )
+        db.commit()
+
         payments_data = [
-            models.Payment(student_id=1, amount=Decimal("700000.00"), payment_date=first_day_current_month, payment_method="Payme", comment="Частичная оплата"),
-            models.Payment(student_id=2, amount=Decimal("1200000.00"), payment_date=first_day_current_month, payment_method="Click", comment="Полная оплата за месяц"),
-            models.Payment(student_id=3, amount=Decimal("500000.00"), payment_date=first_day_current_month, payment_method="Наличные", comment="Аванс в кассу"),
-            models.Payment(student_id=3, amount=Decimal("400000.00"), payment_date=today, payment_method="Карта", comment="Доплата через терминал"),
-            models.Payment(student_id=5, amount=Decimal("300000.00"), payment_date=today, payment_method="Uzum", comment="Первый взнос"),
-            models.Payment(student_id=6, amount=Decimal("1100000.00"), payment_date=today, payment_method="Карта", comment="Закрыт полностью"),
+            models.Payment(student_id=1, amount=Decimal("700000.00"), payment_date=first_day_current_month, payment_method="Payme", comment="Частичная оплата", tariff_snapshot=students_data[0].monthly_fee),
+            models.Payment(student_id=2, amount=Decimal("1200000.00"), payment_date=first_day_current_month, payment_method="Click", comment="Полная оплата за месяц", tariff_snapshot=students_data[1].monthly_fee),
+            models.Payment(student_id=3, amount=Decimal("500000.00"), payment_date=first_day_current_month, payment_method="Наличные", comment="Аванс в кассу", tariff_snapshot=students_data[2].monthly_fee),
+            models.Payment(student_id=3, amount=Decimal("400000.00"), payment_date=today, payment_method="Карта", comment="Доплата через терминал", tariff_snapshot=students_data[2].monthly_fee),
+            models.Payment(student_id=5, amount=Decimal("300000.00"), payment_date=today, payment_method="Uzum", comment="Первый взнос", tariff_snapshot=students_data[4].monthly_fee),
+            models.Payment(student_id=6, amount=Decimal("1100000.00"), payment_date=today, payment_method="Карта", comment="Закрыт полностью", tariff_snapshot=students_data[5].monthly_fee),
         ]
         db.add_all(payments_data)
         db.commit()
