@@ -1,21 +1,22 @@
+import csv
+import io
 import re
 from datetime import date
 from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app import models, schemas, crud
 from app.database import engine, get_db
 
-# Автоматическое создание таблиц при старте
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Ecomdev EduBilling API",
     description="Мини-система учёта оплат и контроля задолженностей учебного центра.",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -145,7 +146,7 @@ def list_payments_by_query(
     return crud.get_student_payments(db, student_id)
 
 
-# ==================== 3. ДОЛЖНИКИ (DEBTORS) ====================
+# ==================== 3. ДОЛЖНИКИ И ЭКСПОРТ (DEBTORS) ====================
 @app.get(
     "/debtors",
     response_model=schemas.DebtorsReportResponse,
@@ -168,6 +169,59 @@ def get_debtors_endpoint(
         )
     year, month_num = int(match.group(1)), int(match.group(2))
     return crud.get_debtors_for_month(db, year=year, month=month_num)
+
+
+@app.get(
+    "/debtors/export",
+    tags=["3. Аналитика и Должники (Debtors)"],
+    summary="Скачать отчёт по должникам за месяц в формате CSV (совместим с MS Excel)",
+)
+def export_debtors_csv(
+    month: str = Query(
+        default_factory=lambda: date.today().strftime("%Y-%m"),
+        description="Месяц в формате YYYY-MM",
+    ),
+    db: Session = Depends(get_db),
+):
+    match = MONTH_REGEX.match(month.strip())
+    if not match:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный формат месяца. Используйте строгий формат YYYY-MM.",
+        )
+    year, month_num = int(match.group(1)), int(match.group(2))
+    report = crud.get_debtors_for_month(db, year=year, month=month_num)
+
+    output = io.StringIO()
+    output.write("\ufeff")  # UTF-8 BOM для корректного открытия кириллицы в MS Excel
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow([
+        "ID ученика",
+        "ФИО ученика",
+        "Группа",
+        "Телефон",
+        "Месячный тариф (сум)",
+        "Оплачено (сум)",
+        "Остаток долга (сум)",
+    ])
+    for d in report.debtors:
+        writer.writerow([
+            d.student_id,
+            d.name,
+            d.group_name,
+            d.phone,
+            d.monthly_fee,
+            d.paid_amount,
+            d.debt_amount,
+        ])
+
+    output.seek(0)
+    filename = f"debtors_{report.month}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ==================== 4. ВЕБ-ИНТЕРФЕЙС (FRONTEND) ====================

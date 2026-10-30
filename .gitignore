@@ -3,3 +3,7 @@ __pycache__/
 .pytest_cache/
 .env
 *.db
+
+desktop.ini
+
+desktop.ini

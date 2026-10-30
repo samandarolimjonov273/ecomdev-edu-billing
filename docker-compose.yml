@@ -1,0 +1,23 @@
+services:
+  web:
+    build: .
+    container_name: edubilling_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./edu_billing.db:/app/edu_billing.db
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  bot:
+    build: .
+    container_name: edubilling_bot
+    command: python -m bot.telegram_bot
+    volumes:
+      - ./edu_billing.db:/app/edu_billing.db
+    env_file:
+      - .env
+    depends_on:
+      - web
+    restart: unless-stopped
