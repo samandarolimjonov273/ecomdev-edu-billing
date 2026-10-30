@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Ecomdev EduBilling — Финансовый контроль</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    }
+    .glass {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(14px);
+    }
+    /* Кастомная стрелка для <select>, чтобы текст никогда не наезжал на иконку */
+    .custom-select {
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.65rem center;
+      background-size: 0.9rem;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen pb-16">
+
+  <!-- Верхняя панель -->
+  <header class="sticky top-0 z-30 glass border-b border-slate-800/80 px-4 py-3">
+    <div class="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-lg shadow-lg shadow-indigo-600/30">
+          E
+        </div>
+        <div>
+          <h1 class="font-bold text-base sm:text-lg leading-tight">Ecomdev EduBilling</h1>
+          <p class="text-xs text-slate-400">Система финансового учёта учебного центра</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2.5">
+        <!-- Кастомный RU-пикер месяца (не зависит от языка ОС браузера) -->
+        <div
+          onclick="openNativePicker('monthPicker')"
+          class="relative flex items-center gap-2 bg-slate-900 hover:bg-slate-800/90 border border-slate-700/80 rounded-xl px-3.5 py-2 cursor-pointer transition select-none"
+        >
+          <span class="text-xs text-slate-400 hidden sm:inline">Период:</span>
+          <span id="monthDisplayText" class="text-xs sm:text-sm font-semibold text-slate-100">Октябрь 2026 г.</span>
+          <svg class="w-4 h-4 text-slate-400 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <input
+            type="month"
+            id="monthPicker"
+            aria-label="Расчётный месяц"
+            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          />
+        </div>
+
+        <a href="/docs" target="_blank" class="hidden sm:inline-flex items-center gap-1.5 text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-2 rounded-xl border border-slate-800 transition">
+          Swagger API ↗
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 pt-6 space-y-6">
+
+    <!-- Единая 12-колоночная сетка KPI (4+4+4) -->
+    <section class="grid grid-cols-1 sm:grid-cols-12 gap-4">
+      <div class="sm:col-span-4 bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-400">Должников за <span id="kpiMonthText" class="text-slate-300">месяц</span></p>
+          <p id="kpiDebtorsCount" class="text-2xl sm:text-3xl font-extrabold text-rose-400 mt-1">0</p>
+        </div>
+        <div class="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 font-bold text-sm">
+          !
+        </div>
+      </div>
+
+      <div class="sm:col-span-4 bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4">
+        <p class="text-xs font-medium text-slate-400">Общая сумма задолженности</p>
+        <p id="kpiTotalDebt" class="text-xl sm:text-2xl font-extrabold text-amber-400 mt-1">0 сум</p>
+      </div>
+
+      <div class="sm:col-span-4 bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-400">Активных учеников в базе</p>
+          <p id="kpiTotalStudents" class="text-2xl sm:text-3xl font-extrabold text-emerald-400 mt-1">0</p>
+        </div>
+        <button onclick="openStudentModal()" class="bg-slate-800 hover:bg-slate-700 text-xs font-semibold px-3.5 py-2.5 rounded-xl border border-slate-700 transition">
+          + Новый ученик
+        </button>
+      </div>
+    </section>
+
+    <!-- Основная 12-колоночная сетка: 7 колонок Список должников + 5 колонок Кассовая форма -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+      <!-- Правая колонка: Кассовая форма оплаты (Sticky) -->
+      <section class="lg:col-span-5 order-1 lg:order-2 lg:sticky lg:top-20">
+        <div id="paymentCard" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl transition-all duration-300">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="font-bold text-base flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+              Приём оплаты
+            </h2>
+            <span class="text-[11px] font-medium text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-lg">Касса • UZS</span>
+          </div>
+
+          <form id="paymentForm" class="space-y-4" autocomplete="off">
+
+            <!-- Searchable Combobox + Selected Student Chip (Badge) -->
+            <div class="relative" id="studentCombobox">
+              <label class="block text-xs font-medium text-slate-400 mb-1.5">Ученик (поиск по ФИО, группе или ID)</label>
+              <input type="hidden" id="paymentStudentId" required />
+              <div class="relative">
+                <input
+                  type="text"
+                  id="studentSearchBox"
+                  placeholder="Начните вводить имя, группу или ID..."
+                  required
+                  class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-9 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
+                />
+                <button
+                  type="button"
+                  id="clearStudentBtn"
+                  onclick="clearSelectedStudent()"
+                  class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs px-1"
+                  title="Сбросить выбор"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <!-- Бейдж (Chip) выбранного ученика -->
+              <div id="selectedStudentChip" class="hidden mt-2"></div>
+
+              <div
+                id="studentDropdownList"
+                class="hidden absolute z-40 mt-1 w-full max-h-60 overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-2xl divide-y divide-slate-800/70"
+              ></div>
+            </div>
+
+            <!-- Сумма оплаты с маской разрядов (500 000) и Кастомное RU-поле Даты (29.10.2026) -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1.5">Сумма оплаты (сум)</label>
+                <input
+                  type="text"
+                  inputmode="numeric"
+                  id="paymentAmountDisplay"
+                  placeholder="500 000"
+                  required
+                  class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold tracking-wide focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1.5">Дата платежа</label>
+                <div
+                  onclick="openNativePicker('paymentDate')"
+                  class="relative flex items-center justify-between w-full bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl px-3.5 py-2.5 cursor-pointer transition"
+                >
+                  <span id="paymentDateDisplayText" class="text-sm font-medium text-slate-100">29.10.2026</span>
+                  <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <input
+                    type="date"
+                    id="paymentDate"
+                    required
+                    class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Способ оплаты (FinTech Pill Selector) -->
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1.5">Способ оплаты</label>
+              <input type="hidden" id="paymentMethodInput" value="Наличные" />
+              <div class="grid grid-cols-5 gap-1.5" id="methodButtons">
+                <button type="button" data-method="Наличные" class="method-btn bg-indigo-600 text-white border-indigo-500 text-xs font-semibold py-2 rounded-xl border transition">Нал</button>
+                <button type="button" data-method="Карта" class="method-btn bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 text-xs font-medium py-2 rounded-xl border transition">Карта</button>
+                <button type="button" data-method="Click" class="method-btn bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 text-xs font-medium py-2 rounded-xl border transition">Click</button>
+                <button type="button" data-method="Payme" class="method-btn bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 text-xs font-medium py-2 rounded-xl border transition">Payme</button>
+                <button type="button" data-method="Uzum" class="method-btn bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 text-xs font-medium py-2 rounded-xl border transition">Uzum</button>
+              </div>
+            </div>
+
+            <!-- Комментарий кассира -->
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1.5">Комментарий к платежу (необязательно)</label>
+              <input
+                type="text"
+                id="paymentComment"
+                placeholder="Напр.: Оплата за 1-ю половину месяца / Чек №412"
+                class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <!-- Главный Primary CTA -->
+            <button
+              type="submit"
+              class="w-full bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] text-white font-semibold py-3 rounded-xl shadow-lg shadow-indigo-600/25 transition text-sm"
+            >
+              Подтвердить оплату
+            </button>
+          </form>
+
+          <div id="toastBox" class="hidden mt-3 p-3 rounded-xl text-xs font-medium"></div>
+        </div>
+      </section>
+
+      <!-- Левая колонка: Список должников + Фильтры и Сортировка -->
+      <section class="lg:col-span-7 order-2 lg:order-1 space-y-4">
+        <div class="bg-slate-900/70 border border-slate-800/90 rounded-2xl p-3.5 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="font-bold text-base">
+              Должники за <span id="selectedMonthLabel" class="text-indigo-400"></span>
+            </h2>
+            <span id="filteredCountBadge" class="text-xs text-slate-400"></span>
+          </div>
+
+          <!-- Панель поиска, фильтра по группе и сортировки (с pr-8 и custom-select без обрезки букв) -->
+          <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+            <div class="sm:col-span-5">
+              <input
+                type="search"
+                id="searchInput"
+                placeholder="Поиск по имени или телефону..."
+                class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div class="sm:col-span-3">
+              <select
+                id="groupFilterSelect"
+                class="custom-select truncate w-full bg-slate-950 border border-slate-800 rounded-xl pl-3 pr-8 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+              >
+                <option value="">Все группы</option>
+              </select>
+            </div>
+            <div class="sm:col-span-4">
+              <select
+                id="sortSelect"
+                class="custom-select truncate w-full bg-slate-950 border border-slate-800 rounded-xl pl-3 pr-8 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+              >
+                <option value="debt_desc">Долг: по убыванию</option>
+                <option value="debt_asc">Долг: по возрастанию</option>
+                <option value="name_asc">По алфавиту (А–Я)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div id="debtorsContainer" class="space-y-3"></div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Модальное окно: Добавить нового ученика -->
+  <div id="studentModal" class="fixed inset-0 z-50 hidden bg-black/75 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-base">Добавить нового ученика</h3>
+        <button onclick="closeStudentModal()" class="text-slate-400 hover:text-white text-sm">✕</button>
+      </div>
+      <form id="studentForm" class="space-y-3">
+        <input type="text" id="stName" placeholder="ФИО ученика (напр. Тимур Каримов)" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm" />
+        <input type="text" id="stPhone" placeholder="Телефон (+998 90 123 45 67)" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm" />
+        <input type="text" id="stGroup" placeholder="Группа (напр. Python Backend #14)" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm" />
+        <input type="text" inputmode="numeric" id="stFeeDisplay" placeholder="Месячный тариф (напр. 1 200 000)" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold" />
+        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-xl text-sm">
+          Сохранить ученика
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Модальное окно: История оплат ученика -->
+  <div id="historyModal" class="fixed inset-0 z-50 hidden bg-black/75 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between">
+        <h3 id="historyTitle" class="font-bold text-base">История оплат</h3>
+        <button onclick="closeHistoryModal()" class="text-slate-400 hover:text-white text-sm">✕</button>
+      </div>
+      <div id="historyList" class="space-y-2.5 max-h-80 overflow-y-auto text-sm"></div>
+    </div>
+  </div>
+
+  <script>
+    const RU_MONTHS = [
+      'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+      'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
+    ];
+
+    const fmtCurrency = (num) => new Intl.NumberFormat('ru-RU').format(Math.round(Number(num) || 0)) + ' сум';
+    const formatDigitsWithSpaces = (raw) => {
+      const digits = String(raw).replace(/\D/g, '');
+      if (!digits) return '';
+      return new Intl.NumberFormat('ru-RU').format(Number(digits));
+    };
+    const parseMaskedNumber = (str) => Number(String(str).replace(/\D/g, '')) || 0;
+
+    function formatMonthRu(ym) {
+      if (!ym || !ym.includes('-')) return ym;
+      const [y, m] = ym.split('-').map(Number);
+      return `${RU_MONTHS[m - 1]} ${y} г.`;
+    }
+
+    function formatDateRu(isoDate) {
+      if (!isoDate || !isoDate.includes('-')) return isoDate;
+      const [y, m, d] = isoDate.split('-');
+      return `${d}.${m}.${y}`;
+    }
+
+    function openNativePicker(inputId) {
+      const el = document.getElementById(inputId);
+      if (el && typeof el.showPicker === 'function') {
+        try { el.showPicker(); } catch (_) { el.focus(); }
+      } else if (el) {
+        el.focus();
+      }
+    }
+
+    const today = new Date();
+    const defaultMonth = today.toISOString().slice(0, 7);
+    const defaultDate = today.toISOString().slice(0, 10);
+
+    const monthPicker = document.getElementById('monthPicker');
+    const monthDisplayText = document.getElementById('monthDisplayText');
+    const paymentDate = document.getElementById('paymentDate');
+    const paymentDateDisplayText = document.getElementById('paymentDateDisplayText');
+    const searchInput = document.getElementById('searchInput');
+    const groupFilterSelect = document.getElementById('groupFilterSelect');
+    const sortSelect = document.getElementById('sortSelect');
+    const paymentAmountDisplay = document.getElementById('paymentAmountDisplay');
+    const stFeeDisplay = document.getElementById('stFeeDisplay');
+
+    monthPicker.value = defaultMonth;
+    monthDisplayText.textContent = formatMonthRu(defaultMonth);
+    paymentDate.value = defaultDate;
+    paymentDateDisplayText.textContent = formatDateRu(defaultDate);
+
+    paymentDate.addEventListener('change', () => {
+      paymentDateDisplayText.textContent = formatDateRu(paymentDate.value);
+    });
+
+    [paymentAmountDisplay, stFeeDisplay].forEach((inputEl) => {
+      inputEl.addEventListener('input', (e) => {
+        e.target.value = formatDigitsWithSpaces(e.target.value);
+      });
+    });
+
+    document.querySelectorAll('.method-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.getElementById('paymentMethodInput').value = btn.dataset.method;
+        document.querySelectorAll('.method-btn').forEach((b) => {
+          b.className = 'method-btn bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 text-xs font-medium py-2 rounded-xl border transition';
+        });
+        btn.className = 'method-btn bg-indigo-600 text-white border-indigo-500 text-xs font-semibold py-2 rounded-xl border transition';
+      });
+    });
+
+    let cachedDebtors = [];
+    let cachedStudents = [];
+
+    async function loadDashboard() {
+      const month = monthPicker.value || defaultMonth;
+      const monthRu = formatMonthRu(month);
+      monthDisplayText.textContent = monthRu;
+      document.getElementById('selectedMonthLabel').textContent = monthRu;
+      document.getElementById('kpiMonthText').textContent = monthRu.toLowerCase();
+
+      const [debtorsRes, studentsRes] = await Promise.all([
+        fetch(`/debtors?month=${month}`),
+        fetch('/students')
+      ]);
+
+      const debtorsData = await debtorsRes.json();
+      cachedStudents = await studentsRes.json();
+      cachedDebtors = debtorsData.debtors || [];
+
+      document.getElementById('kpiDebtorsCount').textContent = debtorsData.total_debtors;
+      document.getElementById('kpiTotalDebt').textContent = fmtCurrency(debtorsData.total_debt_sum);
+      document.getElementById('kpiTotalStudents').textContent = cachedStudents.length;
+
+      populateGroupFilter();
+      renderStudentComboboxList(document.getElementById('studentSearchBox').value);
+      renderSelectedStudentChip();
+      renderDebtors();
+    }
+
+    function populateGroupFilter() {
+      const currentGroup = groupFilterSelect.value;
+      const groups = [...new Set(cachedStudents.map(s => s.group_name))].sort();
+      groupFilterSelect.innerHTML = '<option value="">Все группы (' + groups.length + ')</option>';
+      groups.forEach(g => {
+        const opt = document.createElement('option');
+        opt.value = g;
+        opt.textContent = g;
+        groupFilterSelect.appendChild(opt);
+      });
+      if (groups.includes(currentGroup)) groupFilterSelect.value = currentGroup;
+    }
+
+    // --- SEARCHABLE COMBOBOX + SELECTED CHIP ---
+    const studentSearchBox = document.getElementById('studentSearchBox');
+    const studentDropdownList = document.getElementById('studentDropdownList');
+    const paymentStudentId = document.getElementById('paymentStudentId');
+    const clearStudentBtn = document.getElementById('clearStudentBtn');
+    const selectedStudentChip = document.getElementById('selectedStudentChip');
+
+    function renderSelectedStudentChip() {
+      const activeId = Number(paymentStudentId.value);
+      const st = cachedStudents.find(s => s.id === activeId);
+      if (!st) {
+        selectedStudentChip.classList.add('hidden');
+        selectedStudentChip.innerHTML = '';
+        return;
+      }
+      selectedStudentChip.classList.remove('hidden');
+      selectedStudentChip.innerHTML = `
+        <div class="inline-flex items-center gap-2 bg-indigo-500/15 border border-indigo-500/40 text-indigo-200 px-3 py-1.5 rounded-xl text-xs">
+          <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+          <span class="font-semibold">${st.name}</span>
+          <span class="text-indigo-300/80">• ID ${st.id} • ${st.group_name}</span>
+          <button type="button" onclick="clearSelectedStudent()" class="ml-1 text-indigo-300 hover:text-white font-bold" title="Отменить выбор">✕</button>
+        </div>
+      `;
+    }
+
+    function renderStudentComboboxList(filterText = '') {
+      const q = filterText.trim().toLowerCase();
+      const matched = cachedStudents.filter(st =>
+        st.name.toLowerCase().includes(q) ||
+        st.group_name.toLowerCase().includes(q) ||
+        st.phone.toLowerCase().includes(q) ||
+        String(st.id).includes(q)
+      );
+
+      if (matched.length === 0) {
+        studentDropdownList.innerHTML = `<div class="px-3.5 py-2.5 text-xs text-slate-400">Ученик не найден</div>`;
+        return;
+      }
+
+      studentDropdownList.innerHTML = matched.map(st => `
+        <button
+          type="button"
+          onclick="selectStudentInCombobox(${st.id})"
+          class="w-full text-left px-3.5 py-2.5 hover:bg-slate-800/90 transition flex items-center justify-between gap-2"
+        >
+          <div>
+            <div class="text-xs font-bold text-slate-100">#${st.id} ${st.name}</div>
+            <div class="text-[11px] text-slate-400">${st.group_name} • ${st.phone}</div>
+          </div>
+          <span class="text-[11px] font-semibold text-indigo-400 whitespace-nowrap">${fmtCurrency(st.monthly_fee)}/мес</span>
+        </button>
+      `).join('');
+    }
+
+    function selectStudentInCombobox(studentId) {
+      const st = cachedStudents.find(s => s.id === Number(studentId));
+      if (!st) return;
+      paymentStudentId.value = st.id;
+      studentSearchBox.value = `#${st.id} ${st.name} (${st.group_name})`;
+      clearStudentBtn.classList.remove('hidden');
+      studentDropdownList.classList.add('hidden');
+      renderSelectedStudentChip();
+      renderDebtors(); // Подсветить выбранную карточку слева
+    }
+
+    function clearSelectedStudent() {
+      paymentStudentId.value = '';
+      studentSearchBox.value = '';
+      clearStudentBtn.classList.add('hidden');
+      renderSelectedStudentChip();
+      renderStudentComboboxList('');
+      renderDebtors();
+    }
+
+    studentSearchBox.addEventListener('focus', () => {
+      renderStudentComboboxList(paymentStudentId.value ? '' : studentSearchBox.value);
+      studentDropdownList.classList.remove('hidden');
+    });
+
+    studentSearchBox.addEventListener('input', (e) => {
+      paymentStudentId.value = '';
+      clearStudentBtn.classList.toggle('hidden', !e.target.value);
+      renderSelectedStudentChip();
+      renderStudentComboboxList(e.target.value);
+      studentDropdownList.classList.remove('hidden');
+      renderDebtors();
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!document.getElementById('studentCombobox').contains(e.target)) {
+        studentDropdownList.classList.add('hidden');
+      }
+    });
+
+    // --- ОТРИСОВКА КАРТОЧЕК ДОЛЖНИКОВ (С ПОДСВЕТКОЙ ВЫБРАННОГО УЧЕНИКА) ---
+    function renderDebtors() {
+      const container = document.getElementById('debtorsContainer');
+      const query = searchInput.value.trim().toLowerCase();
+      const selectedGroup = groupFilterSelect.value;
+      const sortBy = sortSelect.value;
+      const activeStudentId = Number(paymentStudentId.value);
+
+      let filtered = cachedDebtors.filter(d => {
+        const matchesQuery =
+          d.name.toLowerCase().includes(query) ||
+          d.group_name.toLowerCase().includes(query) ||
+          d.phone.toLowerCase().includes(query) ||
+          String(d.student_id).includes(query);
+        const matchesGroup = !selectedGroup || d.group_name === selectedGroup;
+        return matchesQuery && matchesGroup;
+      });
+
+      filtered.sort((a, b) => {
+        if (sortBy === 'debt_asc') return Number(a.debt_amount) - Number(b.debt_amount);
+        if (sortBy === 'name_asc') return a.name.localeCompare(b.name, 'ru');
+        return Number(b.debt_amount) - Number(a.debt_amount);
+      });
+
+      document.getElementById('filteredCountBadge').textContent = `Показано: ${filtered.length} из ${cachedDebtors.length}`;
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-8 text-center">
+            <p class="text-emerald-400 font-semibold text-base">🎉 Задолженностей не найдено!</p>
+            <p class="text-xs text-slate-400 mt-1">По выбранным фильтрам все оплаты закрыты.</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = filtered.map(d => {
+        const percent = Math.min(100, Math.round((Number(d.paid_amount) / Number(d.monthly_fee)) * 100));
+        const isSelected = d.student_id === activeStudentId;
+        const cardBorderClass = isSelected
+          ? 'bg-slate-900/95 border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg shadow-indigo-950/50'
+          : 'bg-slate-900 border-slate-800/90 hover:border-slate-700';
+
+        return `
+          <div class="${cardBorderClass} border rounded-2xl p-4 transition-all space-y-3">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-mono ${isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'} px-2 py-0.5 rounded-lg">ID ${d.student_id}</span>
+                  <h3 class="font-bold text-sm sm:text-base">${d.name}</h3>
+                  ${isSelected ? '<span class="text-[11px] font-semibold text-indigo-400 bg-indigo-500/10 border border-indigo-500/30 px-2 py-0.5 rounded-md">В кассе</span>' : ''}
+                </div>
+                <p class="text-xs text-slate-400 mt-0.5">${d.group_name} • <a href="tel:${d.phone}" class="underline hover:text-slate-200">${d.phone}</a></p>
+              </div>
+              <div class="text-right">
+                <span class="text-[11px] text-slate-400 block">Остаток долга:</span>
+                <span class="text-sm sm:text-base font-extrabold text-rose-400">${fmtCurrency(d.debt_amount)}</span>
+              </div>
+            </div>
+
+            <div class="space-y-1">
+              <div class="flex justify-between text-[11px] text-slate-400">
+                <span>Оплачено: <strong class="text-slate-200">${fmtCurrency(d.paid_amount)}</strong> из ${fmtCurrency(d.monthly_fee)}</span>
+                <span>${percent}%</span>
+              </div>
+              <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div class="h-full bg-indigo-500 rounded-full transition-all" style="width: ${percent}%"></div>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onclick="showHistory(${d.student_id}, '${d.name.replace(/'/g, "\\'")}')"
+                class="text-xs bg-slate-800/70 hover:bg-slate-800 text-slate-300 px-3 py-1.5 rounded-xl border border-slate-700/70 transition"
+              >
+                История оплат
+              </button>
+              <button
+                type="button"
+                onclick="prefillPayment(${d.student_id}, ${d.debt_amount})"
+                class="text-xs ${isSelected ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50' : 'bg-slate-900 hover:bg-slate-800 text-slate-200 border-slate-700 hover:border-indigo-500/60'} border font-medium px-3.5 py-1.5 rounded-xl transition flex items-center gap-1"
+              >
+                ${isSelected ? '✓ Выбран в кассе' : `Выбрать для оплаты (${fmtCurrency(d.debt_amount)}) →`}
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function prefillPayment(studentId, debtAmount) {
+      selectStudentInCombobox(studentId);
+      paymentAmountDisplay.value = formatDigitsWithSpaces(Math.round(Number(debtAmount)));
+
+      const card = document.getElementById('paymentCard');
+      card.classList.add('ring-2', 'ring-indigo-500');
+      setTimeout(() => card.classList.remove('ring-2', 'ring-indigo-500'), 1000);
+
+      if (window.innerWidth < 1024) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      paymentAmountDisplay.focus();
+    }
+
+    function showToast(msg, isError = false) {
+      const box = document.getElementById('toastBox');
+      box.textContent = msg;
+      box.className = `mt-3 p-3 rounded-xl text-xs font-medium ${
+        isError ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+      }`;
+      setTimeout(() => box.classList.add('hidden'), 4000);
+    }
+
+    document.getElementById('paymentForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const student_id = Number(paymentStudentId.value);
+      const amount = parseMaskedNumber(paymentAmountDisplay.value);
+      const payment_date = paymentDate.value;
+      const payment_method = document.getElementById('paymentMethodInput').value;
+      const comment = document.getElementById('paymentComment').value.trim() || null;
+
+      if (!student_id) {
+        showToast('⚠️ Пожалуйста, выберите ученика из выпадающего списка.', true);
+        studentSearchBox.focus();
+        return;
+      }
+      if (amount <= 0) {
+        showToast('⚠️ Введите корректную сумму оплаты.', true);
+        paymentAmountDisplay.focus();
+        return;
+      }
+
+      const res = await fetch('/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_id, amount, payment_date, payment_method, comment })
+      });
+
+      if (res.ok) {
+        showToast(`✅ Оплата ${fmtCurrency(amount)} (${payment_method}) успешно проведена!`);
+        paymentAmountDisplay.value = '';
+        document.getElementById('paymentComment').value = '';
+        await loadDashboard();
+      } else {
+        const err = await res.json();
+        showToast('❌ Ошибка: ' + (err.detail || 'Не удалось сохранить оплату'), true);
+      }
+    });
+
+    function openStudentModal() { document.getElementById('studentModal').classList.remove('hidden'); }
+    function closeStudentModal() { document.getElementById('studentModal').classList.add('hidden'); }
+
+    document.getElementById('studentForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        name: document.getElementById('stName').value.trim(),
+        phone: document.getElementById('stPhone').value.trim(),
+        group_name: document.getElementById('stGroup').value.trim(),
+        monthly_fee: parseMaskedNumber(stFeeDisplay.value)
+      };
+      const res = await fetch('/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        e.target.reset();
+        closeStudentModal();
+        await loadDashboard();
+      }
+    });
+
+    async function showHistory(studentId, name) {
+      document.getElementById('historyTitle').textContent = `История оплат: ${name}`;
+      const list = document.getElementById('historyList');
+      list.innerHTML = '<p class="text-slate-400 text-xs">Загрузка...</p>';
+      document.getElementById('historyModal').classList.remove('hidden');
+
+      const res = await fetch(`/students/${studentId}/payments`);
+      const items = await res.json();
+      if (!items.length) {
+        list.innerHTML = '<p class="text-slate-400 text-xs">Платежей пока не зарегистрировано.</p>';
+        return;
+      }
+      list.innerHTML = items.map(p => `
+        <div class="bg-slate-950 border border-slate-800 px-3.5 py-2.5 rounded-xl space-y-1">
+          <div class="flex justify-between items-center">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-medium text-slate-300">${formatDateRu(p.payment_date)}</span>
+              <span class="text-[11px] bg-slate-800 text-indigo-300 px-2 py-0.5 rounded-md">${p.payment_method || 'Наличные'}</span>
+            </div>
+            <span class="font-bold text-emerald-400">+${fmtCurrency(p.amount)}</span>
+          </div>
+          ${p.comment ? `<p class="text-[11px] text-slate-400">${p.comment}</p>` : ''}
+        </div>
+      `).join('');
+    }
+
+    function closeHistoryModal() { document.getElementById('historyModal').classList.add('hidden'); }
+
+    monthPicker.addEventListener('change', loadDashboard);
+    searchInput.addEventListener('input', renderDebtors);
+    groupFilterSelect.addEventListener('change', renderDebtors);
+    sortSelect.addEventListener('change', renderDebtors);
+
+    loadDashboard();
+  </script>
+</body>
+</html>
