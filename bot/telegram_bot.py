@@ -81,9 +81,12 @@ def acquire_or_renew_polling_lock(owner_id: str = INSTANCE_ID, ttl: int = LOCK_T
             set_={"owner_id": owner_id, "expires_at": now + ttl},
             where=can_acquire,
         )
-        result = db.execute(statement)
+        # RETURNING надёжнее rowcount: драйверы PostgreSQL/SQLite по-разному считают
+        # затронутые строки у INSERT ... ON CONFLICT. Строка вернулась — блокировка наша.
+        result = db.execute(statement.returning(models.BotPollingLock.owner_id))
+        acquired = result.first() is not None
         db.commit()
-        return result.rowcount == 1
+        return acquired
     except Exception:
         db.rollback()
         logger.exception("Could not acquire/renew Telegram polling lock")
