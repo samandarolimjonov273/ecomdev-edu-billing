@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+from app.timeutil import today
 
 MONTH_PATTERN = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 MAX_MONEY_AMOUNT = Decimal("1000000000.00")  # 1 млрд сум — верхний предел одной операции
@@ -96,7 +97,7 @@ class PaymentCreate(BaseModel):
 
     student_id: int = Field(..., gt=0, examples=[1])
     amount: Decimal = Field(..., gt=0, le=MAX_MONEY_AMOUNT, decimal_places=2, examples=[500000.00])
-    payment_date: date = Field(default_factory=date.today, examples=["2026-10-30"])
+    payment_date: date = Field(default_factory=today, examples=["2026-10-30"])
     payment_method: str = Field(default="Наличные", max_length=30, examples=["Payme"])
     comment: Optional[str] = Field(default=None, max_length=255)
     idempotency_key: Optional[str] = Field(default=None, max_length=64)
@@ -165,7 +166,8 @@ class DebtorItem(BaseModel):
     paid_amount: Decimal
     carry_over_credit: Decimal = Decimal("0.00")
     prior_arrears: Decimal = Decimal("0.00")
-    debt_amount: Decimal
+    debt_amount: Decimal  # сколько ученик ещё должен ЗА ЭТОТ месяц
+    total_outstanding: Decimal = Decimal("0.00")  # всего к оплате, включая долги прошлых месяцев
     history_verified: bool = True
 
 
@@ -174,7 +176,8 @@ class DebtorsReportResponse(BaseModel):
     status: str = "ok"
     history_verified: bool = True
     total_debtors: int
-    total_debt_sum: Decimal
+    total_debt_sum: Decimal  # сумма долгов именно за выбранный месяц
+    total_outstanding_sum: Decimal = Decimal("0.00")  # сумма к оплате с учётом прошлых месяцев
     unverified_debt_sum: Decimal = Decimal("0.00")
     debtors: list[DebtorItem]
 

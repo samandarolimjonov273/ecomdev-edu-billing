@@ -7,6 +7,11 @@ from sqlalchemy import and_, extract, func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app import models, schemas
+from app.timeutil import current_month
+
+
+class PaymentBeforeEnrollmentError(ValueError):
+    """Оплата датирована раньше месяца зачисления: такая оплата не попала бы в расчёт долга."""
 
 
 class IdempotencyConflictError(Exception):
@@ -35,6 +40,9 @@ def log_audit(
 
     previous_hash = None
     try:
+        if db.get_bind().dialect.name == "postgresql":
+            # Сериализуем запись в цепочку: параллельные транзакции не получат один и тот же previous_hash.
+            db.execute(text("SELECT pg_advisory_xact_lock(727001)"))
         previous = db.execute(
             text(
                 "SELECT payload_hash FROM audit_logs ORDER BY id DESC LIMIT 1"
@@ -78,7 +86,7 @@ def _build_payment_fingerprint(data: schemas.PaymentCreate) -> str:
 
 
 def create_student(db: Session, data: schemas.StudentCreate, actor: str = "api") -> models.Student:
-    start_month = data.effective_from_month or date.today().strftime("%Y-%m")
+    start_month = data.effective_from_month or current_month()
     dump = data.model_dump(exclude={"effective_from_month"})
     dump["enrolled_month"] = start_month
     dump["history_verified_from"] = start_month
@@ -138,9 +146,9 @@ def update_student(
         setattr(student, field, value)
 
     if new_fee is not None:
-        current_month = date.today().strftime("%Y-%m")
-        target_month = eff_month or current_month
-        if target_month < current_month:
+        now_month = current_month()
+        target_month = eff_month or now_month
+        if target_month < now_month:
             raise ValueError("Нельзя менять тариф задним числом; укажите текущий или будущий месяц")
         if target_month < student.enrolled_month:
             raise ValueError("Месяц действия тарифа не может быть раньше зачисления ученика")
@@ -167,7 +175,7 @@ def update_student(
             db.query(models.StudentTariffHistory)
             .filter(
                 models.StudentTariffHistory.student_id == student.id,
-                models.StudentTariffHistory.effective_from_month <= current_month,
+                models.StudentTariffHistory.effective_from_month <= now_month,
             )
             .order_by(
                 models.StudentTariffHistory.effective_from_month.desc(),
@@ -198,7 +206,7 @@ def delete_student(db: Session, student: models.Student, actor: str = "api") -> 
     """
     student.is_archived = True
     student.archived_at = datetime.now(timezone.utc).isoformat()
-    student.archived_month = date.today().strftime("%Y-%m")
+    student.archived_month = current_month()
     log_audit(
         db,
         entity_type="student",
@@ -252,6 +260,11 @@ def create_payment(
         student = get_student(db, data.student_id)
 
     pay_ym = data.payment_date.strftime("%Y-%m")
+    if student and pay_ym < student.enrolled_month:
+        raise PaymentBeforeEnrollmentError(
+            f"Дата оплаты ({data.payment_date}) раньше месяца зачисления ученика ({student.enrolled_month}). "
+            "Укажите корректную дату или измените месяц зачисления."
+        )
     effective_fee = get_effective_tariff_for_month(db, student, pay_ym) if student else None
 
     payload = data.model_dump()
@@ -364,9 +377,15 @@ def _iter_months(start_ym: str, end_ym: str) -> list[str]:
     return months
 
 
-def get_debtors_for_month(db: Session, year: int, month: int) -> schemas.DebtorsReportResponse:
+def get_debtors_for_month(
+    db: Session, year: int, month: int, include_arrears: bool = False
+) -> schemas.DebtorsReportResponse:
     """
-    Рассчитывает задолженности за месяц YYYY-MM с учётом:
+    Рассчитывает задолженности за месяц YYYY-MM.
+    Ученик — должник, если оплаты за месяц (+ аванс прошлых месяцев) меньше тарифа месяца;
+    debt_amount = недостающая сумма за этот месяц. Долги прошлых месяцев не смешиваются
+    с долгом месяца: они отдаются отдельно (prior_arrears, total_outstanding).
+    Учитывается:
     1) Границы зачисления ученика (enrolled_month);
     2) Исторического тарифа на каждый месяц (StudentTariffHistory);
     3) Переноса аванса/переплаты (carry_over_credit) с предыдущих месяцев;
@@ -468,6 +487,7 @@ def get_debtors_for_month(db: Session, year: int, month: int) -> schemas.Debtors
 
     debtors_list: list[schemas.DebtorItem] = []
     total_debt_sum = Decimal("0.00")
+    total_outstanding_sum = Decimal("0.00")
     unverified_debt_sum = Decimal("0.00")
 
     for st in students:
@@ -488,13 +508,17 @@ def get_debtors_for_month(db: Session, year: int, month: int) -> schemas.Debtors
 
         current_fee = resolve_fee(target_ym)
         current_paid = paid_by_student_month.get((st.id, target_ym), Decimal("0.00")).quantize(Decimal("0.01"))
-        outstanding = (prior_balance + current_fee - current_paid).quantize(Decimal("0.01"))
         carry_credit = max(Decimal("0.00"), -prior_balance).quantize(Decimal("0.01"))
         prior_arrears = max(Decimal("0.00"), prior_balance).quantize(Decimal("0.01"))
+        # Долг ЗА МЕСЯЦ: сколько не хватает до тарифа этого месяца (с учётом аванса прошлых месяцев).
+        month_debt = max(Decimal("0.00"), current_fee - current_paid - carry_credit).quantize(Decimal("0.01"))
+        # Весь остаток к оплате, включая долги прошлых месяцев (справочно).
+        total_outstanding = max(Decimal("0.00"), prior_balance + current_fee - current_paid).quantize(Decimal("0.01"))
 
-        if outstanding > 0:
-            debt = outstanding
+        if month_debt > 0 or (include_arrears and total_outstanding > 0):
+            debt = month_debt
             total_debt_sum += debt
+            total_outstanding_sum += total_outstanding
             verified_from = st.history_verified_from or st.enrolled_month
             history_verified = target_ym >= verified_from
             if not history_verified:
@@ -510,6 +534,7 @@ def get_debtors_for_month(db: Session, year: int, month: int) -> schemas.Debtors
                     carry_over_credit=carry_credit,
                     prior_arrears=prior_arrears,
                     debt_amount=debt,
+                    total_outstanding=total_outstanding,
                     history_verified=history_verified,
                 )
             )
@@ -528,6 +553,27 @@ def get_debtors_for_month(db: Session, year: int, month: int) -> schemas.Debtors
         history_verified=(status == "ok"),
         total_debtors=len(debtors_list),
         total_debt_sum=total_debt_sum,
+        total_outstanding_sum=total_outstanding_sum,
         unverified_debt_sum=unverified_debt_sum,
         debtors=debtors_list,
     )
+
+def verify_audit_chain(db: Session) -> dict:
+    """
+    Пересчитывает хеш каждой записи аудита и сверяет цепочку previous_hash -> payload_hash.
+    Обнаруживает изменение/удаление записей задним числом (но не защищает от них:
+    для этого нужен append-only доступ на уровне БД).
+    """
+    rows = db.query(models.AuditLog).order_by(models.AuditLog.id.asc()).all()
+    prev = None
+    for row in rows:
+        if (row.previous_hash or None) != prev:
+            return {"ok": False, "checked": len(rows), "broken_at_id": row.id, "reason": "разрыв цепочки"}
+        payload = "|".join([
+            row.created_at, row.entity_type, str(row.entity_id), row.action,
+            row.actor, row.details or "", row.previous_hash or "",
+        ])
+        if hashlib.sha256(payload.encode("utf-8")).hexdigest() != row.payload_hash:
+            return {"ok": False, "checked": len(rows), "broken_at_id": row.id, "reason": "хеш не совпал"}
+        prev = row.payload_hash
+    return {"ok": True, "checked": len(rows), "broken_at_id": None, "reason": None}

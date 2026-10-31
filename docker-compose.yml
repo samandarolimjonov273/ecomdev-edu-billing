@@ -13,7 +13,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    restart: unless-stopped
+    restart: on-failure
 
   web:
     build: .
@@ -39,6 +39,7 @@ services:
     env_file:
       - .env
     command: python -m bot.telegram_bot
+    profiles: ["bot"]   # запускается только по требованию: docker compose --profile bot up
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-edubilling}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-edubilling}

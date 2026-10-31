@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from app.database import SessionLocal, engine, run_migrations
 from app import models
+from app.timeutil import today as tz_today
 
 run_migrations(engine)
 
@@ -13,7 +14,7 @@ def seed_demo_data():
             print("ℹ️ База уже содержит данные, пропуск seed.")
             return
 
-        today = date.today()
+        today = tz_today()
         first_day_current_month = date(today.year, today.month, 1)
 
         students_data = [

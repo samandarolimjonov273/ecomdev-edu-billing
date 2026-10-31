@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas, crud
 from app.config import settings
 from app.database import get_db
+from app.timeutil import current_month
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,22 @@ MAX_LOGIN_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 60
 
 FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+_CSP_COMMON = "base-uri 'self'; frame-ancestors 'none'; object-src 'none'; form-action 'self'"
+# JSON-ответы API: ничего не грузим.
+CSP_API = f"default-src 'self'; {_CSP_COMMON}"
+# Дашборд: Tailwind CDN + inline-скрипт/стили самой страницы (в планах: убрать CDN, см. README).
+CSP_DASHBOARD = (
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+    f"style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; {_CSP_COMMON}"
+)
+# Swagger UI / ReDoc берут ассеты с jsDelivr.
+CSP_DOCS = (
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "img-src 'self' data: https://fastapi.tiangolo.com https://cdn.jsdelivr.net; "
+    f"worker-src 'self' blob:; connect-src 'self'; {_CSP_COMMON}"
+)
 
 
 def is_insecure_demo_allowed() -> bool:
@@ -94,10 +111,14 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
-    response.headers.setdefault(
-        "Content-Security-Policy",
-        "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; form-action 'self'",
-    )
+    path = request.url.path
+    if path in ("/docs", "/redoc"):
+        csp = CSP_DOCS
+    elif path == "/":
+        csp = CSP_DASHBOARD
+    else:
+        csp = CSP_API
+    response.headers.setdefault("Content-Security-Policy", csp)
     return response
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -107,19 +128,16 @@ def verify_access(
     request: Request,
     x_api_key: Optional[str] = Security(api_key_header),
     x_csrf_token: Optional[str] = Header(default=None, alias="X-CSRF-Token"),
-    x_role: Optional[str] = Header(default=None, alias="X-Role"),
     session_id: Optional[str] = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     db: Session = Depends(get_db),
 ) -> str:
     """
     Проверяет авторизацию и возвращает идентификатор актора для аудита.
-    Дополнительно распознаёт бизнес-роль, которая будет использоваться для RBAC-политик.
     """
     required_key = settings.api_secret_key()
     if not required_key:
         demo_enabled = is_insecure_demo_allowed()
         if demo_enabled:
-            request.state.user_role = "admin"
             return "demo-operator"
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -127,10 +145,6 @@ def verify_access(
         )
 
     if x_api_key and hmac.compare_digest(x_api_key, required_key):
-        role = (x_role or "admin").strip().lower()
-        if role not in {"admin", "cashier", "viewer"}:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимая роль в заголовке X-Role")
-        request.state.user_role = role
         return "api-key-client"
 
     now = int(time.time())
@@ -145,11 +159,6 @@ def verify_access(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail="Отсутствует или недействителен X-CSRF-Token",
                     )
-            request.state.user_role = "cashier"
-            if x_role:
-                role = x_role.strip().lower()
-                if role in {"admin", "cashier", "viewer"}:
-                    request.state.user_role = role
             return "web-cashier"
         if sess:
             db.delete(sess)
@@ -159,16 +168,6 @@ def verify_access(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Требуется авторизация (сессия кассира или заголовок X-API-Key)",
     )
-
-
-def require_role(required_role: str):
-    def dependency(request: Request, actor: str = Depends(verify_access)) -> str:
-        role = getattr(request.state, "user_role", "cashier")
-        if role != required_role:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Требуется роль {required_role}")
-        return actor
-
-    return dependency
 
 
 MONTH_REGEX = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
@@ -217,7 +216,7 @@ def auth_login_endpoint(
     now = time.time()
     now_int = int(now)
     client_key = hashlib.sha256(client_ip.encode("utf-8")).hexdigest()
-    rate_limit = db.get(models.LoginRateLimit, client_key)
+    rate_limit = db.get(models.LoginAttempt, client_key)
     if rate_limit and now_int - rate_limit.window_started_at < LOGIN_WINDOW_SECONDS:
         attempts = rate_limit.attempts
     else:
@@ -255,8 +254,8 @@ def auth_login_endpoint(
             {"key": client_key, "now": now_int, "cutoff": now_int - LOGIN_WINDOW_SECONDS},
         )
         failed_attempts = rate_result.scalar_one()
-        db.query(models.LoginRateLimit).filter(
-            models.LoginRateLimit.window_started_at < now_int - 86400
+        db.query(models.LoginAttempt).filter(
+            models.LoginAttempt.window_started_at < now_int - 86400
         ).delete(synchronize_session=False)
         db.commit()
         if failed_attempts > MAX_LOGIN_ATTEMPTS:
@@ -269,8 +268,8 @@ def auth_login_endpoint(
     db.query(models.WebSession).filter(models.WebSession.expires_at <= now_int).delete(
         synchronize_session=False
     )
-    db.query(models.LoginRateLimit).filter(
-        models.LoginRateLimit.window_started_at < now_int - 86400
+    db.query(models.LoginAttempt).filter(
+        models.LoginAttempt.window_started_at < now_int - 86400
     ).delete(synchronize_session=False)
     db.execute(
         text(
@@ -451,6 +450,8 @@ def create_payment_endpoint(
         return crud.create_payment(db, payload, student=student, actor=actor)
     except crud.IdempotencyConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except crud.PaymentBeforeEnrollmentError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 
 @app.post(
@@ -518,8 +519,12 @@ def list_payments_by_query(
 )
 def get_debtors_endpoint(
     month: str = Query(
-        default_factory=lambda: date.today().strftime("%Y-%m"),
+        default_factory=lambda: current_month(),
         description="Месяц в формате YYYY-MM (например, 2026-10)",
+    ),
+    include_arrears: bool = Query(
+        default=False,
+        description="true — добавить в отчёт и тех, у кого долг только за прошлые месяцы",
     ),
     db: Session = Depends(get_db),
 ):
@@ -530,7 +535,7 @@ def get_debtors_endpoint(
             detail="Неверный формат месяца. Используйте строгий формат YYYY-MM (например, 2026-10).",
         )
     year, month_num = int(match.group(1)), int(match.group(2))
-    return crud.get_debtors_for_month(db, year=year, month=month_num)
+    return crud.get_debtors_for_month(db, year=year, month=month_num, include_arrears=include_arrears)
 
 
 @app.get(
@@ -540,7 +545,7 @@ def get_debtors_endpoint(
     dependencies=[Depends(verify_access)],
 )
 def export_debtors_csv(
-    month: str = Query(default_factory=lambda: date.today().strftime("%Y-%m")),
+    month: str = Query(default_factory=lambda: current_month()),
     db: Session = Depends(get_db),
 ):
     match = MONTH_REGEX.match(month.strip())
@@ -596,6 +601,16 @@ def export_debtors_csv(
 )
 def list_audit_logs_endpoint(db: Session = Depends(get_db)):
     return db.query(models.AuditLog).order_by(models.AuditLog.id.desc()).limit(100).all()
+
+
+@app.get(
+    "/audit-logs/verify",
+    tags=["3. Аналитика и Должники (Debtors)"],
+    summary="Проверить целостность хеш-цепочки журнала аудита",
+    dependencies=[Depends(verify_access)],
+)
+def verify_audit_logs_endpoint(db: Session = Depends(get_db)):
+    return crud.verify_audit_chain(db)
 
 
 STATIC_INDEX = Path(__file__).parent / "static" / "index.html"

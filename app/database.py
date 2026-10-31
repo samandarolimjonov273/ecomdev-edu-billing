@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.timeutil import current_month
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -113,32 +114,7 @@ def run_migrations(target_engine=engine) -> int:
         for version in range(current_version + 1, LATEST_SCHEMA_VERSION + 1):
             inspector = inspect(target_engine)
             tables = set(inspector.get_table_names())
-            now_ym = datetime.now(timezone.utc).strftime("%Y-%m")
-
-            if version == 7 and {"students", "payments"}.issubset(tables):
-                with target_engine.connect() as conn:
-                    ambiguous_legacy_rows = conn.execute(
-                        text(
-                            """
-                            SELECT COUNT(*)
-                            FROM students
-                            WHERE enrolled_month = '2026-01'
-                              AND history_verified_from = '2026-01'
-                            """
-                        )
-                    ).scalar_one()
-                if ambiguous_legacy_rows:
-                    backup_guidance = (
-                        "Review the SQLite backup"
-                        if target_engine.dialect.name == "sqlite"
-                        else "Take and review a PostgreSQL backup"
-                    )
-                    raise RuntimeError(
-                        "Migration v7 stopped without changing student history: "
-                        f"{ambiguous_legacy_rows} ambiguous legacy row(s) use 2026-01. "
-                        f"{backup_guidance} and confirm enrollment/tariff dates manually, "
-                        "then rerun migrations."
-                    )
+            now_ym = current_month()
 
             with target_engine.begin() as conn:
                 if version == 1 and "students" in tables:
@@ -263,7 +239,7 @@ def run_migrations(target_engine=engine) -> int:
                         conn.execute(text("ALTER TABLE payments ADD COLUMN void_reason VARCHAR(500)"))
                     conn.execute(
                         text(
-                            "UPDATE payments SET status = CASE WHEN is_voided = 1 THEN 'VOIDED' ELSE 'COMPLETED' END "
+                            "UPDATE payments SET status = CASE WHEN is_voided IS TRUE THEN 'VOIDED' ELSE 'COMPLETED' END "
                             "WHERE status IS NULL OR status = ''"
                         )
                     )
@@ -281,8 +257,6 @@ def run_migrations(target_engine=engine) -> int:
 
         return LATEST_SCHEMA_VERSION
 
-
-ensure_schema_migrations = run_migrations
 
 
 def get_db():

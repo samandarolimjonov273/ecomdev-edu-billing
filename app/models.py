@@ -12,6 +12,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from app.database import Base
+from app.timeutil import current_month, today
 
 
 class Student(Base):
@@ -25,13 +26,13 @@ class Student(Base):
     enrolled_month = Column(
         String(7),
         nullable=False,
-        default=lambda: date.today().strftime("%Y-%m"),
+        default=lambda: current_month(),
         index=True,
     )
     history_verified_from = Column(
         String(7),
         nullable=False,
-        default=lambda: date.today().strftime("%Y-%m"),
+        default=lambda: current_month(),
     )
     is_archived = Column(Boolean, nullable=False, default=False, index=True)
     archived_at = Column(String(40), nullable=True)
@@ -73,7 +74,7 @@ class Payment(Base):
     # RESTRICT защищает финансовую историю от физического удаления при удалении ученика
     student_id = Column(Integer, ForeignKey("students.id", ondelete="RESTRICT"), nullable=False, index=True)
     amount = Column(Numeric(12, 2), nullable=False)
-    payment_date = Column(Date, nullable=False, default=date.today, index=True)
+    payment_date = Column(Date, nullable=False, default=today, index=True)
     payment_method = Column(String(30), nullable=False, default="Наличные")
     comment = Column(String(255), nullable=True)
     status = Column(String(20), nullable=False, default="COMPLETED", index=True)
@@ -89,7 +90,7 @@ class Payment(Base):
 
 
 class AuditLog(Base):
-    """Неизменяемый журнал финансового и административного аудита (P1.6)."""
+    """Журнал аудита с хеш-цепочкой (проверка: GET /audit-logs/verify). Только добавление записей."""
     __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -131,8 +132,6 @@ class LoginAttempt(Base):
     window_started_at = Column(Integer, nullable=False)
     attempts = Column(Integer, nullable=False, default=0)
 
-
-LoginRateLimit = LoginAttempt
 
 
 Index("ix_payments_student_date", Payment.student_id, Payment.payment_date)

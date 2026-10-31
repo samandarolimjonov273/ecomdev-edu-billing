@@ -147,13 +147,12 @@ class Settings:
             raise RuntimeError("API_SECRET_KEY must be replaced before running in production")
         if app_env == "production" and len(secret_key) < 32 and not demo_allowed:
             raise RuntimeError("API_SECRET_KEY is too weak for production; use at least 32 random chars")
-        if (
-            app_env == "production"
-            and not Settings.cookie_secure()
-            and not demo_allowed
-            and "localhost" not in Settings.cors_origins()
-        ):
-            raise RuntimeError("Production requires COOKIE_SECURE=1 unless behind a trusted local reverse proxy")
+        if app_env == "production" and secret_key.lower().startswith(("dev-only", "change", "replace")) and not demo_allowed:
+            raise RuntimeError("API_SECRET_KEY looks like a development placeholder; generate a random secret")
+        if app_env == "production" and not Settings.cookie_secure() and not demo_allowed:
+            raise RuntimeError(
+                "Production requires COOKIE_SECURE=1 (for plain-http localhost tests set APP_ENV=development)"
+            )
 
         bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
         if bot_token and Settings.auto_start_bot():

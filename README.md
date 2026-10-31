@@ -1,92 +1,105 @@
-﻿# Ecomdev EduBilling
+# Ecomdev EduBilling — мини-учёт оплат учебного центра
 
-Mini billing system for an education center with:
-- student management
-- payment tracking
-- debt calculation by month
-- Telegram bot assistant for admin operations
+REST API (FastAPI + SQLAlchemy) + **Telegram-бот** (вариант А) + простая веб-панель для кассира.
+БД: SQLite по умолчанию, PostgreSQL через Docker Compose.
 
-## Stack
-- Python 3.11+
-- FastAPI
-- SQLAlchemy
-- SQLite (default for local development)
-- PostgreSQL support via Docker Compose
-- Telegram Bot API
+## Что реализовано (по пунктам задания)
 
-## Part 1. API
-The project implements the required financial accounting functionality:
+**Часть 1. API** (интерактивная документация: `/docs`)
 
-### Students
-- create student
-- list students
-- update student
-- archive student
+| Пункт | Эндпоинт |
+|---|---|
+| Ученики: создать | `POST /students` |
+| Ученики: список | `GET /students` (`?group=`, `?include_archived=true`) |
+| Ученики: изменить | `PATCH /students/{id}` (`PUT` — то же, поля необязательные) |
+| Ученики: удалить | `DELETE /students/{id}` → **архивация** (soft delete), история оплат сохраняется |
+| Оплата: добавить | `POST /payments` (заголовок `Idempotency-Key` защищает от дублей) |
+| Оплаты: список по ученику | `GET /students/{id}/payments` или `GET /payments?student_id=` |
+| Должники за месяц | `GET /debtors?month=YYYY-MM` (`&include_arrears=true` — добавить тех, у кого долг только за прошлые месяцы) |
 
-### Payments
-- add payment for a student
-- list payments by student
-- payment history is preserved even after archive
+Дополнительно: отмена оплаты `POST /payments/{id}/void` (с причиной), CSV `GET /debtors/export`, журнал аудита `GET /audit-logs` и проверка его хеш-цепочки `GET /audit-logs/verify`.
 
-### Debtors
-- `GET /debtors?month=YYYY-MM`
-- returns students who paid less than their monthly fee and the remaining debt
+**Часть 2. Telegram-бот:** `/debt` — должники текущего месяца, `/pay <id ученика> <сумма>` — внести оплату. Команды доступны только ID из `TELEGRAM_ADMIN_IDS`; свой ID показывает `/myid`.
 
-## Part 2. Interface
-This project implements the Telegram bot option.
+### Как считаются должники
 
-### Commands
-- `/debt` — shows debtors for the current month
-- `/pay <student_id> <amount>` — adds a payment for a student
+Ученик — должник за месяц, если оплаты в этом месяце меньше его месячной суммы.
+`debt_amount` — сколько ещё должен **за этот месяц**. Переплата прошлых месяцев (аванс) зачитывается и уменьшает долг.
+Долги прошлых месяцев не смешиваются с `debt_amount`, а отдаются отдельно: `prior_arrears`, `total_outstanding` (в отчёте — `total_outstanding_sum`).
+Чтобы увидеть и тех, кто закрыл текущий месяц, но должен за прошлые, добавьте `include_arrears=true`.
 
-## Part 3. README
-### Quick start
+Пример: тариф 1000, в сентябре оплачено 0, в октябре 400.
+Отчёт за октябрь: `paid_amount=400`, `debt_amount=600`, `prior_arrears=1000`, `total_outstanding=1600`.
 
-#### 1. Clone repository
+Прочие правила: до месяца зачисления долг не начисляется, а оплата с датой раньше месяца зачисления отклоняется (422); «сегодня» и границы месяцев считаются по часовому поясу `APP_TIMEZONE` (по умолчанию `Asia/Tashkent`), а не по времени сервера; смена тарифа действует с указанного месяца и не искажает прошлые (история тарифов); отменённые оплаты не учитываются; суммы хранятся как `Decimal`, не `float`.
+
+## Запуск с нуля
+
+Нужен Python 3.11+ (проверено на 3.12).
+
 ```bash
-git clone https://github.com/<your-user>/<your-repo>.git
-cd <your-repo>
-2. Create environment file
-cp .env.example .env
-Then update .env:
-APP_ENV=development
-API_SECRET_KEY=your_super_long_random_secret_here
-COOKIE_SECURE=0
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_ADMIN_IDS=
-AUTO_START_BOT=0
-CORS_ORIGINS=http://127.0.0.1:8000,http://localhost:8000
-Important:
+git clone <URL-репозитория> edu-billing && cd edu-billing
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env          # значения по умолчанию подходят для локального запуска
+python migrate.py             # создаёт схему БД
+python seed.py                # демо-данные: 6 учеников, 4 должника
+uvicorn app.main:app --reload
+```
 
-.env is local-only and must not be committed
-API_SECRET_KEY must be set in production
-TELEGRAM_ADMIN_IDS must contain valid Telegram user IDs before bot payment commands are enabled
-3. Install dependencies
-python -m pip install -r requirements.txt
-4. Run migrations
-python migrate.py
-5. Seed demo data
-python seed.py
-6. Start API
-python -m uvicorn app.main:app --reload
-Open:
+Откройте http://127.0.0.1:8000 (веб-панель; ключ входа — `API_SECRET_KEY` из `.env`) или http://127.0.0.1:8000/docs.
 
-http://127.0.0.1:8000/docs
-http://127.0.0.1:8000
-7. Start Telegram bot
-python -m bot.telegram_bot
-Production notes
-Do not commit .env
-Use a strong API_SECRET_KEY
-Set COOKIE_SECURE=1 behind HTTPS or a trusted reverse proxy
-Telegram bot is fail-closed: if no admin IDs are configured, payment commands are disabled
-For real deployment, use a proper secret manager instead of only .env
-3–5 improvements if I had another week
-Full RBAC with separate roles for admin, cashier, and viewer
-Real secret manager integration for AWS/GCP/Azure
-Stronger audit immutability and tamper-evidence for financial logs
-Deployment guardrails, backup verification, and staging/production checks
-CI/CD pipeline for migration validation and automated test coverage
-Part 4. AI usage summary
-I used GitHub Copilot together with targeted prompts and direct test trace analysis to debug the project. The most effective prompts were short and specific, such as: “fix the root cause of the failing FastAPI tests with minimal patch”, “explain why startup failed because of env mismatch and show the exact fix”, and “add production-safe config validation without breaking the API contract”. AI helped with scaffolding, explaining runtime issues, and suggesting safer patterns, but the final validation and the business-logic fixes were reviewed and corrected manually. This was especially important for migration behavior, debt calculation, and bot authorization rules. In total, AI accelerated the development, but the final correctness was confirmed by the pytest suite and direct code review.
+### Примеры запросов
 
+Все эндпоинты требуют заголовок `X-API-Key` со значением `API_SECRET_KEY`:
+
+```bash
+KEY="dev-only-change-me-0123456789abcdefghijkl"   # из .env
+
+curl -H "X-API-Key: $KEY" "http://127.0.0.1:8000/debtors?month=2026-10"
+
+curl -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"name":"Иван Петров","phone":"+998 90 123 45 67","group_name":"Python #1","monthly_fee":1000000}' \
+  http://127.0.0.1:8000/students
+
+curl -H "X-API-Key: $KEY" -H "Content-Type: application/json" -H "Idempotency-Key: pay-001" \
+  -d '{"student_id":1,"amount":500000}' http://127.0.0.1:8000/payments
+
+curl -H "X-API-Key: $KEY" http://127.0.0.1:8000/students/1/payments
+```
+
+### Telegram-бот
+
+1. Создайте бота у @BotFather, впишите токен в `TELEGRAM_BOT_TOKEN` (`.env`).
+2. Отправьте боту `/myid`, впишите свой числовой ID в `TELEGRAM_ADMIN_IDS` (несколько — через запятую).
+3. Запустите: `python -m bot.telegram_bot`. Без `TELEGRAM_ADMIN_IDS` платёжные команды закрыты (fail-closed).
+
+### Docker (PostgreSQL + API + бот)
+
+```bash
+cp .env.example .env     # задайте POSTGRES_PASSWORD и API_SECRET_KEY (≥ 32 символов)
+docker compose up --build
+```
+
+Compose запускает приложение в `APP_ENV=production`: нужен случайный `API_SECRET_KEY` (значение-заглушка из `.env.example` приложение не примет) и `COOKIE_SECURE=1`. Для входа в панель по обычному `http://localhost` в Safari используйте локальный запуск без Docker. Миграции применяются при старте контейнера `web`. Бот в Compose — отдельный профиль и по умолчанию не стартует (чтобы не перезапускаться без токена). С ботом: задайте `TELEGRAM_BOT_TOKEN` и `TELEGRAM_ADMIN_IDS` и выполните `docker compose --profile bot up --build`.
+
+### Тесты
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q       # 34 теста на SQLite, не зависят от вашего .env
+
+# + сквозной тест на настоящем PostgreSQL (в CI включён автоматически)
+TEST_DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/test_db python -m pytest -q tests/test_postgres.py
+```
+
+CI (GitHub Actions) гоняет тесты на SQLite и PostgreSQL 16 и проверяет миграции и бэкап.
+
+## Что улучшил бы, будь ещё неделя 
+
+1. **Пагинация и поиск** в `GET /students`, `/payments`, `/debtors` (сейчас отдаётся всё) + индексы под реальные объёмы.
+2. **Настоящие роли** (админ / кассир / только чтение) с пользователями в БД вместо одного общего ключа.
+3. **Блокировка журнала аудита для SQLite** (в PostgreSQL запись в цепочку уже сериализована advisory-lock) и append-only права на таблицу.
+4. **Исправление тарифа задним числом** отдельной операцией с записью в аудит (сейчас запрещено; ошибки чинятся отменой оплаты).
+5. **Фронтенд без CDN**: собрать Tailwind заранее, убрать `unsafe-inline` из CSP, добавить e2e-тесты на телефонных размерах.
+6. **Бот и уведомления**: inline-кнопки «внести оплату», напоминания должникам, часовой пояс Ташкента для границ месяца, вебхук вместо long polling.

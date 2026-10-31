@@ -17,6 +17,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.database import SessionLocal
 from app import crud, models, schemas
 from app.config import settings
+from app.timeutil import today as tz_today
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -129,7 +130,7 @@ def handle_start(user_id: int | None = None) -> str:
 
 
 def handle_debt() -> str:
-    today = date.today()
+    today = tz_today()
     db = SessionLocal()
     try:
         report = crud.get_debtors_for_month(db, year=today.year, month=today.month)
@@ -179,8 +180,10 @@ def handle_pay(text: str, username: str, update_id: int | None = None) -> str:
     try:
         student_id = int(parts[1])
         amount = Decimal(parts[2])
-        if amount <= 0 or amount > schemas.MAX_MONEY_AMOUNT:
+        if not amount.is_finite() or amount <= 0 or amount > schemas.MAX_MONEY_AMOUNT:
             raise ValueError
+        if amount.as_tuple().exponent < -2:
+            return "❌ Сумма может иметь не более 2 знаков после запятой."
     except (ValueError, InvalidOperation):
         return "❌ Некорректные параметры: укажите валидный ID ученика и положительную сумму."
 
@@ -196,7 +199,7 @@ def handle_pay(text: str, username: str, update_id: int | None = None) -> str:
             schemas.PaymentCreate(
                 student_id=student_id,
                 amount=amount,
-                payment_date=date.today(),
+                payment_date=tz_today(),
                 payment_method="Telegram Bot",
                 comment=f"Внесено через Telegram (@{username})",
                 idempotency_key=idem_key,
@@ -204,7 +207,7 @@ def handle_pay(text: str, username: str, update_id: int | None = None) -> str:
             student=student,
             actor=f"tg:{username}",
         )
-        today = date.today()
+        today = tz_today()
         report = crud.get_debtors_for_month(db, year=today.year, month=today.month)
         remaining = next(
             (d.debt_amount for d in report.debtors if d.student_id == student_id),
@@ -221,6 +224,11 @@ def handle_pay(text: str, username: str, update_id: int | None = None) -> str:
         )
     except crud.IdempotencyConflictError as exc:
         return f"⚠️ Конфликт идемпотентности: {html.escape(str(exc))}"
+    except crud.PaymentBeforeEnrollmentError as exc:
+        return f"❌ {html.escape(str(exc))}"
+    except ValueError as exc:  # включая pydantic.ValidationError
+        logger.warning("Rejected /pay input: %s", exc)
+        return "❌ Некорректные данные платежа. Пример: <code>/pay 4 500000</code>"
     finally:
         db.close()
 
